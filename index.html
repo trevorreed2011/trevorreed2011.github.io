@@ -56,6 +56,35 @@ body{
 }
 
 /* ---------- Header ---------- */
+.view-only-badge{
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #fff;
+  background: var(--crimson);
+  padding: 3px 9px;
+  border-radius: 20px;
+  margin-right: 8px;
+}
+body.view-only #panel input,
+body.view-only #panel select,
+body.view-only #panel textarea,
+body.view-only #panel button:not(#panelClose){
+  pointer-events: none;
+}
+body.view-only #addRowBtn,
+body.view-only #addColBtn,
+body.view-only #importBtn,
+body.view-only #resetDataBtn,
+body.view-only .drag-handle,
+body.view-only .col-drag-handle,
+body.view-only .bullet-remove,
+body.view-only .transfer-add-icon,
+body.view-only .transfer-logo-remove{
+  pointer-events: none;
+  opacity: 0.4;
+}
 .login-overlay{
   position: fixed;
   inset: 0;
@@ -1935,6 +1964,8 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     colAutoFit: {}
   };
 
+  var canEdit = true;
+
   var FIXED_WIDTHS = { pick: 88, drag: 34 };
   var MIN_COL_WIDTH = 50;
   var CENTER_COLS = { LOGO: true, BOWLS: true, POS: true, AGE: true, HT: true, WT: true, RD: true, GR: true };
@@ -2073,7 +2104,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   var firstProspectsSnapshot = true;
 
   function scheduleSave() {
-    if (!currentUser) return;
+    if (!currentUser || !canEdit) return;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(doSave, 400);
   }
@@ -2419,6 +2450,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       dragHandle.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>';
       dragHandle.addEventListener("click", function (e) { e.stopPropagation(); });
       dragHandle.addEventListener("dragstart", function (e) {
+        if (!canEdit) { e.preventDefault(); return; }
         state.dragColKey = col.key;
         th.classList.add("dragging-col");
         e.dataTransfer.effectAllowed = "move";
@@ -2632,6 +2664,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       if (manualOrder) {
         handle.draggable = true;
         handle.addEventListener("dragstart", function (e) {
+          if (!canEdit) { e.preventDefault(); return; }
           state.dragId = row.__id;
           tr.classList.add("dragging");
           e.dataTransfer.effectAllowed = "move";
@@ -2819,6 +2852,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     }
 
     function startEdit() {
+      if (!canEdit) return;
       if (td.querySelector("input") || td.querySelector("select")) return;
       var currentVal = row[col.key];
 
@@ -2941,6 +2975,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   }
 
   function deleteRow(id) {
+    if (!canEdit) return;
     var row = state.rows.filter(function (r) { return r.__id === id; })[0];
     if (!row) return;
     state.rows = state.rows.filter(function (r) { return r.__id !== id; });
@@ -4354,6 +4389,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   }
 
   function openSportPicker(row) {
+    if (!canEdit) return;
     if (!row.MULTI_SPORT) row.MULTI_SPORT = [];
     var selected = new Set(row.MULTI_SPORT);
     centerModal.innerHTML = "";
@@ -4397,6 +4433,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   }
 
   function openBowlPicker(row) {
+    if (!canEdit) return;
     if (!row.BOWLS) row.BOWLS = [];
     var selected = new Set(row.BOWLS);
     centerModal.innerHTML = "";
@@ -4690,6 +4727,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   });
 
   $("addColBtn").addEventListener("click", function () {
+    if (!canEdit) return;
     centerModal.innerHTML = "";
     var h = document.createElement("h3");
     h.textContent = "Add column";
@@ -4751,6 +4789,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   });
 
   $("addRowBtn").addEventListener("click", function () {
+    if (!canEdit) return;
     var blank = { __id: uid(), __custom: {} };
     state.columns.forEach(function (c) { blank[c.key] = null; });
     state.rows.push(blank);
@@ -5002,6 +5041,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   }
 
   $("importBtn").addEventListener("click", function () {
+    if (!canEdit) { toast("View-only access — can't import"); return; }
     $("importFile").click();
   });
   $("importFile").addEventListener("change", function (e) {
@@ -5035,6 +5075,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   });
 
   $("resetDataBtn").addEventListener("click", function () {
+    if (!canEdit) { toast("View-only access — can't reset data"); return; }
     centerModal.innerHTML = "";
     var h = document.createElement("h3");
     h.textContent = "Reset all data?";
@@ -5127,7 +5168,25 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       loginOverlay.style.display = "none";
       appRoot.style.display = "";
       $("signedInAs").textContent = emailToUsername(user.email);
-      startFirestoreSync();
+      db.collection("userRoles").doc(user.uid).get().then(function (doc) {
+        canEdit = !(doc.exists && doc.data().canEdit === false);
+        document.body.classList.toggle("view-only", !canEdit);
+        var badge = $("signedInAs");
+        var existingBadge = document.getElementById("viewOnlyBadge");
+        if (!canEdit && !existingBadge) {
+          var b = document.createElement("span");
+          b.className = "view-only-badge";
+          b.id = "viewOnlyBadge";
+          b.textContent = "View Only";
+          badge.parentNode.insertBefore(b, badge);
+        } else if (canEdit && existingBadge) {
+          existingBadge.remove();
+        }
+        startFirestoreSync();
+      }).catch(function () {
+        canEdit = true;
+        startFirestoreSync();
+      });
     } else {
       currentUser = null;
       loginOverlay.style.display = "flex";
