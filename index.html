@@ -2153,8 +2153,22 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   }
 
   function applyProspectsSnapshot(snap) {
-    var rows = [];
-    snap.forEach(function (doc) { rows.push(doc.data()); });
+    var incoming = [];
+    snap.forEach(function (doc) { incoming.push(doc.data()); });
+
+    var existingById = {};
+    state.rows.forEach(function (r) { existingById[r.__id] = r; });
+
+    var rows = incoming.map(function (data) {
+      var existing = existingById[data.__id];
+      if (existing) {
+        Object.keys(existing).forEach(function (k) { delete existing[k]; });
+        Object.assign(existing, data);
+        return existing;
+      }
+      return data;
+    });
+
     rows.sort(function (a, b) { return (a.RANK || 0) - (b.RANK || 0); });
     state.rows = rows;
     lastSavedSnapshot = {};
