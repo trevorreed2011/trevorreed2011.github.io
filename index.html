@@ -1568,9 +1568,16 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   .panel-head-top{ flex-wrap: wrap; }
   .field-row{ grid-template-columns: 1fr; }
   .panel-banner{ grid-template-columns: repeat(3, 1fr); }
-  #panelBanner{ flex-wrap: wrap; justify-content: flex-start; }
+  .panel{ overflow: hidden; }
+  .panel-body{ overflow-x: hidden; padding: 16px 12px 28px; }
+  #panelBanner{ flex-wrap: wrap; justify-content: flex-start; gap: 8px; padding: 12px 10px; }
   .panel-banner-10{ grid-template-columns: repeat(5, 1fr); }
-  #panelBanner2{ flex-wrap: wrap; justify-content: flex-start; }
+  #panelBanner2{ flex-wrap: wrap; justify-content: flex-start; gap: 6px; padding: 12px 10px; }
+  .banner-cell-fixed{ width: 50px; }
+  .banner-cell-procomp{ width: 100px; }
+  #panelBanner2 .banner-cell{ width: 56px; }
+  .pff-metrics-grid{ flex-wrap: wrap; justify-content: flex-start; gap: 6px; padding: 12px 10px; }
+  .pff-metric{ width: 62px; }
   .report-grid{ flex-direction: column; }
   .report-box{ aspect-ratio: auto; min-height: 160px; }
   .report-col .report-box{ flex: none; }
@@ -2161,18 +2168,24 @@ tr.dragging .drag-handle{ cursor: grabbing; }
 
     var rows = incoming.map(function (data) {
       var existing = existingById[data.__id];
+      if (existing && data.__id === state.activePanelId) {
+        // Row is actively being edited in the open popup — leave it untouched
+        // so in-progress edits to nested arrays (injuries, traits, etc.)
+        // never get overwritten by an incoming sync echo mid-edit.
+        return existing;
+      }
       if (existing) {
         Object.keys(existing).forEach(function (k) { delete existing[k]; });
         Object.assign(existing, data);
+        lastSavedSnapshot[existing.__id] = JSON.stringify(existing);
         return existing;
       }
+      lastSavedSnapshot[data.__id] = JSON.stringify(data);
       return data;
     });
 
     rows.sort(function (a, b) { return (a.RANK || 0) - (b.RANK || 0); });
     state.rows = rows;
-    lastSavedSnapshot = {};
-    rows.forEach(function (row) { lastSavedSnapshot[row.__id] = JSON.stringify(row); });
     renderTable();
   }
 
@@ -3040,7 +3053,65 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     } else {
       img.style.display = "none";
       img.src = "";
+      tryAutoLogo(row);
     }
+  }
+
+  var teamsListPromise = null;
+  function fetchAllTeams() {
+    if (teamsListPromise) return teamsListPromise;
+    teamsListPromise = fetch("https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams?limit=1000")
+      .then(function (res) {
+        if (!res.ok) throw new Error("teams fetch failed");
+        return res.json();
+      })
+      .then(function (data) {
+        var list = [];
+        (data.sports || []).forEach(function (sport) {
+          (sport.leagues || []).forEach(function (league) {
+            (league.teams || []).forEach(function (t) {
+              var team = t.team;
+              if (!team) return;
+              var logo = (team.logos && team.logos[0] && team.logos[0].href) ? team.logos[0].href : null;
+              if (!logo) return;
+              var names = [team.displayName, team.name, team.shortDisplayName, team.location, team.nickname]
+                .filter(Boolean).map(normalizeName);
+              list.push({ names: names, logo: logo });
+            });
+          });
+        });
+        return list;
+      })
+      .catch(function () { return []; });
+    return teamsListPromise;
+  }
+
+  function matchCollegeLogo(teams, college) {
+    var target = normalizeName(college);
+    if (!target) return null;
+    var exact = teams.filter(function (t) { return t.names.indexOf(target) !== -1; });
+    if (exact.length === 1) return exact[0];
+    var partial = teams.filter(function (t) {
+      return t.names.some(function (n) { return n.indexOf(target) !== -1 || target.indexOf(n) !== -1; });
+    });
+    if (partial.length === 1) return partial[0];
+    return null;
+  }
+
+  function tryAutoLogo(row) {
+    if (row.LOGO || row.__logoChecked || !row.COLLEGE) return;
+    row.__logoChecked = true;
+    fetchAllTeams().then(function (teams) {
+      var match = matchCollegeLogo(teams, row.COLLEGE);
+      if (!match) return;
+      row.LOGO = match.logo;
+      row.__headshotChecked = false;
+      if (state.activePanelId === row.__id) {
+        renderCollegeLogo(row);
+        renderHeadshot(row);
+      }
+      renderTable();
+    });
   }
 
   var PANEL_NAME_MAX_FONT = 30;
@@ -4121,6 +4192,13 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     });
   }
   bindPanelField("panelName", "NAME", false);
+  $("panelName").addEventListener("change", function () {
+    var row = currentPanelRow();
+    if (!row || row.HEADSHOT) return;
+    row.__headshotChecked = false;
+    tryAutoHeadshot(row);
+    renderHeadshot(row);
+  });
   $("panelName").addEventListener("input", function () {
     fitPanelName($("panelName").value);
   });
@@ -4137,6 +4215,12 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     }
   });
   bindPanelField("panelCollege", "COLLEGE", false);
+  $("panelCollege").addEventListener("change", function () {
+    var row = currentPanelRow();
+    if (!row) return;
+    row.__logoChecked = false;
+    tryAutoLogo(row);
+  });
   bindPanelField("bannerHt", "HT", false);
   bindPanelField("bannerWt", "WT", true);
   $("bannerAge").addEventListener("blur", function () {
@@ -4882,6 +4966,9 @@ tr.dragging .drag-handle{ cursor: grabbing; }
             var b = BOWL_LIST.filter(function (bw) { return bw.key === key; })[0];
             return b ? b.label : key;
           }).join("; "));
+        } else if (c.key === "AGE") {
+          var ageVal = r.AGE === null || r.AGE === undefined ? "" : r.AGE;
+          vals.push(ageVal !== "" && r.AGE_RED ? ageVal + "*" : ageVal);
         } else {
           vals.push(r[c.key] === null || r[c.key] === undefined ? "" : r[c.key]);
         }
@@ -4979,7 +5066,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         var headerIndex = {};
         headerRow.forEach(function (h, idx) { headerIndex[h.trim()] = idx; });
 
-        var colMap = state.columns.filter(function (c) { return c.key !== "BOWLS" && headerIndex[c.label] !== undefined; })
+        var colMap = state.columns.filter(function (c) { return c.key !== "BOWLS" && c.key !== "AGE" && headerIndex[c.label] !== undefined; })
           .map(function (c) { return { key: c.key, type: c.type, idx: headerIndex[c.label] }; });
         var extraMap = CSV_EXTRA_FIELDS.filter(function (f) { return headerIndex[f.label] !== undefined; })
           .map(function (f) { return { key: f.key, idx: headerIndex[f.label] }; });
@@ -4997,6 +5084,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         var scoutIdx = headerIndex["Scouting Traits"];
         var pffIdx = headerIndex["PFF Metrics"];
         var bowlsIdx = headerIndex["Bowl"];
+        var ageIdx = headerIndex["Age"];
 
         var newRows = [];
         for (var r = 1; r < table.length; r++) {
@@ -5021,6 +5109,15 @@ tr.dragging .drag-handle{ cursor: grabbing; }
 
           row.MULTI_SPORT = multiSportIdx !== undefined ? parseCsvSportList(cells[multiSportIdx]) : [];
           row.BOWLS = bowlsIdx !== undefined ? parseCsvBowlList(cells[bowlsIdx]) : [];
+          var ageRaw = ageIdx !== undefined ? cells[ageIdx] : "";
+          if (ageRaw === undefined || ageRaw === "") {
+            row.AGE = null;
+            row.AGE_RED = false;
+          } else {
+            var ageTrimmed = ageRaw.trim();
+            row.AGE_RED = ageTrimmed.slice(-1) === "*";
+            row.AGE = row.AGE_RED ? ageTrimmed.slice(0, -1).trim() : ageTrimmed;
+          }
           row.STRENGTHS = strengthsIdx !== undefined ? parseCsvBulletList(cells[strengthsIdx]) : [];
           row.WEAKNESSES = weaknessesIdx !== undefined ? parseCsvBulletList(cells[weaknessesIdx]) : [];
           row.SCOUT = scoutIdx !== undefined ? parseCsvKeyValueMap(cells[scoutIdx]) : {};
