@@ -76,7 +76,6 @@ body.view-only #panel button:not(#panelClose){
 body.view-only #addRowBtn,
 body.view-only #addColBtn,
 body.view-only #importBtn,
-body.view-only #resetDataBtn,
 body.view-only .drag-handle,
 body.view-only .col-drag-handle,
 body.view-only .bullet-remove,
@@ -1742,16 +1741,10 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         <button class="btn" style="width:100%; margin-bottom:8px; justify-content:flex-start;" id="exportCsvBtn">Export as CSV</button>
         <button class="btn" style="width:100%; margin-bottom:8px; justify-content:flex-start;" id="importBtn">Import snapshot (.json)</button>
         <input type="file" id="importFile" accept="application/json" class="visually-hidden">
-        <button class="btn" style="width:100%; margin-bottom:8px; justify-content:flex-start;" id="importCsvBtn">Import CSV</button>
+        <button class="btn" style="width:100%; justify-content:flex-start;" id="importCsvBtn">Import CSV</button>
         <input type="file" id="importCsvFile" accept=".csv,text/csv" class="visually-hidden">
-        <button class="btn danger" style="width:100%; justify-content:flex-start;" id="resetDataBtn">Reset to original data</button>
       </div>
     </div>
-  </div>
-
-  <div class="hint-banner" id="sessionHint">
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-    Edits live in this browser tab only — use Export to save a snapshot you can re-import later.
   </div>
 
   <div class="tab-bar" id="tabBar"></div>
@@ -5303,76 +5296,6 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     morePopover.classList.remove("open");
   });
 
-  $("resetDataBtn").addEventListener("click", function () {
-    if (!canEdit) { toast("View-only access — can't reset data"); return; }
-    centerModal.innerHTML = "";
-    var h = document.createElement("h3");
-    h.textContent = "Reset all data?";
-    centerModal.appendChild(h);
-    var p = document.createElement("p");
-    p.style.cssText = "font-size:13px;color:var(--text-muted);margin:0 0 6px;";
-    p.textContent = "This replaces every edit with the original 706-prospect dataset for everyone sharing this board. This can't be undone.";
-    centerModal.appendChild(p);
-    var actions = document.createElement("div");
-    actions.className = "center-modal-actions";
-    var cancelBtn = document.createElement("button");
-    cancelBtn.className = "btn";
-    cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", closeCenterModal);
-    var confirmBtn = document.createElement("button");
-    confirmBtn.className = "btn danger";
-    confirmBtn.textContent = "Reset";
-    confirmBtn.addEventListener("click", function () {
-      closeCenterModal();
-      db.collection("prospects").get().then(function (snap) {
-        var ids = [];
-        snap.forEach(function (d) { ids.push(d.id); });
-        var chain = Promise.resolve();
-        for (var i = 0; i < ids.length; i += 450) {
-          (function (chunk) {
-            chain = chain.then(function () {
-              var batch = db.batch();
-              chunk.forEach(function (id) { batch.delete(db.collection("prospects").doc(id)); });
-              return batch.commit();
-            });
-          })(ids.slice(i, i + 450));
-        }
-        return chain;
-      }).then(function () {
-        var defaultRows = makeRowsFromRaw(RAW);
-        var chain = Promise.resolve();
-        for (var i = 0; i < defaultRows.length; i += 450) {
-          (function (chunk) {
-            chain = chain.then(function () {
-              var batch = db.batch();
-              chunk.forEach(function (row) { batch.set(db.collection("prospects").doc(row.__id), row); });
-              return batch.commit();
-            });
-          })(defaultRows.slice(i, i + 450));
-        }
-        return chain;
-      }).then(function () {
-        return db.collection("meta").doc("config").set({
-          columns: DEFAULT_COLUMNS.slice(),
-          colWidths: {},
-          colAutoFit: {},
-          activeTab: "ALL",
-          sortKey: null,
-          sortDir: "asc"
-        });
-      }).then(function () {
-        state.posFilter.clear();
-        state.search = "";
-        searchInput.value = "";
-        toast("Data reset to original");
-      });
-    });
-    actions.appendChild(cancelBtn);
-    actions.appendChild(confirmBtn);
-    centerModal.appendChild(actions);
-    openCenterModal();
-    morePopover.classList.remove("open");
-  });
 
   /* ---------------- Init ---------------- */
   var USERNAME_DOMAIN = "@draftboard.local";
