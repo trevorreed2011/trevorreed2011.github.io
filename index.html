@@ -74,10 +74,8 @@ body.view-only #panel button:not(#panelClose){
   pointer-events: none;
 }
 body.view-only #addRowBtn,
-body.view-only #addColBtn,
 body.view-only #importBtn,
 body.view-only .drag-handle,
-body.view-only .col-drag-handle,
 body.view-only .bullet-remove,
 body.view-only .transfer-add-icon,
 body.view-only .transfer-logo-remove{
@@ -417,58 +415,6 @@ td.col-center-cell .td-inner{ text-align: center; }
 td.col-center-cell-badge{ text-align: center; }
 th{ position: relative; }
 
-.col-resize-handle{
-  position: absolute;
-  top: 0;
-  right: -4px;
-  width: 8px;
-  height: 100%;
-  cursor: col-resize;
-  z-index: 6;
-}
-.col-resize-handle::after{
-  content: "";
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: 3px;
-  width: 2px;
-  background: transparent;
-  border-radius: 2px;
-  transition: background 0.12s;
-}
-.col-resize-handle:hover::after,
-.col-resize-handle.resizing::after{
-  background: var(--turf-bright);
-}
-
-.col-menu-btn{
-  opacity: 0.45;
-  background:none;
-  border:none;
-  color: var(--text-dim);
-  cursor:pointer;
-  padding: 2px 4px;
-  border-radius: 4px;
-  margin-left: auto;
-}
-th:hover .col-menu-btn{ opacity: 1; }
-.col-menu-btn:hover{ color: var(--text); background: var(--surface-2); }
-
-.col-drag-handle{
-  opacity: 0;
-  display:flex;
-  align-items:center;
-  cursor: grab;
-  color: var(--text-dim);
-  flex-shrink: 0;
-}
-th:hover .col-drag-handle{ opacity: 1; }
-.col-drag-handle:hover{ color: var(--text); }
-th.dragging-col{ opacity: 0.4; }
-th.col-drag-target-left{ box-shadow: inset 3px 0 0 var(--turf-bright); }
-th.col-drag-target-right{ box-shadow: inset -3px 0 0 var(--turf-bright); }
-
 tbody tr{
   border-bottom: 1px solid var(--border-soft);
   transition: background 0.1s;
@@ -483,7 +429,7 @@ td{
   vertical-align: middle;
 }
 td .td-inner{
-  padding: 4px 12px;
+  padding: 4px 8px;
   display:block;
   min-height: 18px;
   color: var(--text);
@@ -578,7 +524,7 @@ td.bowl-cell .td-inner{
   cursor: pointer;
 }
 td.tight-col .td-inner{ padding: 4px 8px; }
-th.th-tight .th-inner{ padding: 10px 8px; gap: 4px; }
+th.th-tight .th-inner{ padding: 10px 6px; gap: 4px; }
 
 .pick-badge{
   display:inline-flex;
@@ -1723,10 +1669,6 @@ tr.dragging .drag-handle{ cursor: grabbing; }
 
     <div class="toolbar-spacer"></div>
 
-    <button class="btn" id="addColBtn">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-      Column
-    </button>
     <button class="btn primary" id="addRowBtn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
       Prospect
@@ -2035,7 +1977,12 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     return measureCtx.measureText(String(text)).width;
   }
 
+  var autoWidthsDirty = true;
+  var autoWidthsCache = null;
+  function markAutoWidthsDirty() { autoWidthsDirty = true; }
+
   function computeAutoWidths() {
+    if (!autoWidthsDirty && autoWidthsCache) return autoWidthsCache;
     var widths = {};
     state.columns.forEach(function (col) {
       if (col.type === "image" || col.type === "checkbox-image") { widths[col.key] = defaultWidthForCol(col); return; }
@@ -2049,8 +1996,11 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         return;
       }
       var isPos = col.key === "POS";
+      var isHtWt = col.key === "HT" || col.key === "WT";
       var cellFont = isPos
         ? "600 11px 'IBM Plex Mono', monospace"
+        : isHtWt
+        ? "700 13.5px Inter, sans-serif"
         : (isMonoStyledCol(col) ? "13.5px 'IBM Plex Mono', monospace" : "13.5px Inter, sans-serif");
       var headerFont = "500 11px 'IBM Plex Mono', monospace";
       var maxContentWidth = 0;
@@ -2062,22 +2012,22 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         if (isPos) w += 22;
         if (w > maxContentWidth) maxContentWidth = w;
       });
-      var headerWidth = measureTextWidth(col.label.toUpperCase(), headerFont) + 32;
-      var contentTotal = maxContentWidth + 18 + 2;
-      if (col.key === "HT" || col.key === "WT") contentTotal += 28;
+      var headerWidth = measureTextWidth(col.label.toUpperCase(), headerFont) + 28;
+      var contentTotal = maxContentWidth + 10 + 2;
+      if (col.key === "HT" || col.key === "WT") contentTotal += 32;
       var finalWidth = Math.max(headerWidth, contentTotal, MIN_COL_WIDTH);
       if (col.key === "NOTES") finalWidth = Math.min(finalWidth, NOTES_MAX_WIDTH);
       widths[col.key] = Math.round(finalWidth);
     });
+    autoWidthsCache = widths;
+    autoWidthsDirty = false;
     return widths;
   }
 
   function applyAutoWidths() {
     var widths = computeAutoWidths();
     state.columns.forEach(function (col) {
-      if (state.colAutoFit[col.key] !== false) {
-        state.colWidths[col.key] = widths[col.key];
-      }
+      state.colWidths[col.key] = widths[col.key];
     });
   }
 
@@ -2186,6 +2136,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     }
   }
 
+  var lastKnownRowCount = 0;
   function applyProspectsSnapshot(snap) {
     var incoming = [];
     snap.forEach(function (doc) { incoming.push(doc.data()); });
@@ -2212,6 +2163,10 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     });
 
     rows.sort(function (a, b) { return (a.RANK || 0) - (b.RANK || 0); });
+    if (rows.length !== lastKnownRowCount) {
+      markAutoWidthsDirty();
+      lastKnownRowCount = rows.length;
+    }
     state.rows = rows;
     renderTable();
   }
@@ -2219,7 +2174,12 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   function applyConfigSnapshot(doc) {
     if (!doc.exists) return;
     var data = doc.data();
-    if (data.columns) state.columns = data.columns;
+    if (data.columns) {
+      var oldSig = state.columns.map(function (c) { return c.key + ":" + c.label; }).join(",");
+      var newSig = data.columns.map(function (c) { return c.key + ":" + c.label; }).join(",");
+      if (oldSig !== newSig) markAutoWidthsDirty();
+      state.columns = data.columns;
+    }
     if (data.colWidths) state.colWidths = data.colWidths;
     if (data.colAutoFit) state.colAutoFit = data.colAutoFit;
     if (data.activeTab) state.activeTab = data.activeTab;
@@ -2444,46 +2404,6 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     mainTable.style.width = total + "px";
   }
 
-  function attachResizeHandle(th, col) {
-    var handle = document.createElement("div");
-    handle.className = "col-resize-handle";
-    handle.title = "Drag to resize \u2014 double-click to auto-fit again";
-    handle.addEventListener("mousedown", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      var startX = e.clientX;
-      var startWidth = state.colWidths[col.key] || defaultWidthForCol(col);
-      document.body.style.userSelect = "none";
-      handle.classList.add("resizing");
-
-      function onMove(e2) {
-        var delta = e2.clientX - startX;
-        var newWidth = Math.max(56, Math.round(startWidth + delta));
-        state.colWidths[col.key] = newWidth;
-        state.colAutoFit[col.key] = false;
-        if (colEls[col.key]) colEls[col.key].style.width = newWidth + "px";
-        applyTableWidth();
-      }
-      function onUp() {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-        document.body.style.userSelect = "";
-        handle.classList.remove("resizing");
-      }
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-    });
-    handle.addEventListener("dblclick", function (e) {
-      e.stopPropagation();
-      state.colAutoFit[col.key] = true;
-      var w = computeAutoWidths()[col.key];
-      state.colWidths[col.key] = w;
-      if (colEls[col.key]) colEls[col.key].style.width = w + "px";
-      applyTableWidth();
-    });
-    th.appendChild(handle);
-  }
-
   /* ---------------- Header rendering ---------------- */
   function renderHead() {
     renderColgroup();
@@ -2521,169 +2441,30 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       var inner = document.createElement("div");
       inner.className = "th-inner";
 
-      var dragHandle = document.createElement("span");
-      dragHandle.className = "col-drag-handle";
-      dragHandle.draggable = true;
-      dragHandle.title = "Drag to reorder columns";
-      dragHandle.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>';
-      dragHandle.addEventListener("click", function (e) { e.stopPropagation(); });
-      dragHandle.addEventListener("dragstart", function (e) {
-        if (!canEdit) { e.preventDefault(); return; }
-        state.dragColKey = col.key;
-        th.classList.add("dragging-col");
-        e.dataTransfer.effectAllowed = "move";
-        e.stopPropagation();
-      });
-      dragHandle.addEventListener("dragend", function () {
-        th.classList.remove("dragging-col");
-        state.dragColKey = null;
-        Array.prototype.forEach.call(headRow.children, function (h) {
-          h.classList.remove("col-drag-target-left", "col-drag-target-right");
-        });
-      });
-      inner.appendChild(dragHandle);
-
       var labelSpan = document.createElement("span");
       labelSpan.textContent = (col.key === "LOGO") ? "" : col.label;
       inner.appendChild(labelSpan);
 
       if (CENTER_COLS[col.key]) inner.classList.add("col-center-head");
 
-      var arrow = document.createElement("span");
-      arrow.className = "sort-arrow" + (state.sortKey === col.key ? " active" : "");
-      arrow.textContent = state.sortKey === col.key ? (state.sortDir === "asc" ? "\u25B2" : "\u25BC") : "\u2195";
-      inner.appendChild(arrow);
+      var UNSORTABLE_COLS = { BOWLS: true, POS: true, NOTES: true };
+      if (!UNSORTABLE_COLS[col.key]) {
+        var arrow = document.createElement("span");
+        arrow.className = "sort-arrow" + (state.sortKey === col.key ? " active" : "");
+        arrow.textContent = state.sortKey === col.key ? (state.sortDir === "asc" ? "\u25B2" : "\u25BC") : "\u2195";
+        inner.appendChild(arrow);
 
-      inner.addEventListener("click", function (e) {
-        if (e.target.closest(".col-menu-btn") || e.target.closest(".col-drag-handle")) return;
-        if (state.sortKey !== col.key) { state.sortKey = col.key; state.sortDir = "asc"; }
-        else if (state.sortDir === "asc") { state.sortDir = "desc"; }
-        else { state.sortKey = null; state.sortDir = "asc"; }
-        renderTable();
-      });
-
-      var menuBtn = document.createElement("button");
-      menuBtn.className = "col-menu-btn";
-      menuBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>';
-      menuBtn.title = "Column options";
-      menuBtn.addEventListener("click", function (e) {
-        e.stopPropagation();
-        openColumnMenu(col, menuBtn);
-      });
-      inner.appendChild(menuBtn);
-
-      th.addEventListener("dragover", function (e) {
-        if (!state.dragColKey || state.dragColKey === col.key) return;
-        e.preventDefault();
-        var rect = th.getBoundingClientRect();
-        var before = (e.clientX - rect.left) < rect.width / 2;
-        th.classList.toggle("col-drag-target-left", before);
-        th.classList.toggle("col-drag-target-right", !before);
-      });
-      th.addEventListener("dragleave", function () {
-        th.classList.remove("col-drag-target-left", "col-drag-target-right");
-      });
-      th.addEventListener("drop", function (e) {
-        if (!state.dragColKey || state.dragColKey === col.key) return;
-        e.preventDefault();
-        var rect = th.getBoundingClientRect();
-        var before = (e.clientX - rect.left) < rect.width / 2;
-        th.classList.remove("col-drag-target-left", "col-drag-target-right");
-        reorderColumns(state.dragColKey, col.key, before);
-      });
+        inner.addEventListener("click", function () {
+          if (state.sortKey !== col.key) { state.sortKey = col.key; state.sortDir = "asc"; }
+          else if (state.sortDir === "asc") { state.sortDir = "desc"; }
+          else { state.sortKey = null; state.sortDir = "asc"; }
+          renderTable();
+        });
+      }
 
       th.appendChild(inner);
-      attachResizeHandle(th, col);
       headRow.appendChild(th);
     });
-  }
-
-  function buildTabChips(container, selectedSet) {
-    container.innerHTML = "";
-    TAB_DEFS.forEach(function (def) {
-      var chip = document.createElement("div");
-      chip.className = "chip" + (selectedSet.has(def.id) ? " active" : "");
-      chip.textContent = def.label;
-      chip.addEventListener("click", function () {
-        if (selectedSet.has(def.id)) {
-          if (selectedSet.size === 1) { toast("At least one tab must stay selected"); return; }
-          selectedSet.delete(def.id);
-        } else {
-          selectedSet.add(def.id);
-        }
-        buildTabChips(container, selectedSet);
-      });
-      container.appendChild(chip);
-    });
-  }
-
-  function openColumnMenu(col, anchorEl) {
-    var rect = anchorEl.getBoundingClientRect();
-    centerModal.innerHTML = "";
-    var h = document.createElement("h3");
-    h.textContent = col.label;
-    centerModal.appendChild(h);
-
-    var renameField = document.createElement("div");
-    renameField.className = "field";
-    renameField.innerHTML = '<label>Column name</label><input id="renameInput" value="' + escapeAttr(col.label) + '">';
-    centerModal.appendChild(renameField);
-
-    var tabsLabel = document.createElement("div");
-    tabsLabel.className = "popover-title";
-    tabsLabel.style.marginTop = "14px";
-    tabsLabel.textContent = "Show on tabs";
-    centerModal.appendChild(tabsLabel);
-
-    var tabsGrid = document.createElement("div");
-    tabsGrid.className = "chip-grid";
-    var selectedTabs = new Set(col.tabs && col.tabs.length ? col.tabs : TAB_DEFS.map(function (d) { return d.id; }));
-    buildTabChips(tabsGrid, selectedTabs);
-    centerModal.appendChild(tabsGrid);
-
-    var actions = document.createElement("div");
-    actions.className = "center-modal-actions";
-
-    var removeBtn = document.createElement("button");
-    removeBtn.className = "btn danger";
-    removeBtn.textContent = "Remove column";
-    removeBtn.style.marginRight = "auto";
-    if (!col.removable) {
-      removeBtn.disabled = true;
-      removeBtn.style.opacity = "0.35";
-      removeBtn.title = "Core columns can't be removed";
-    } else {
-      removeBtn.addEventListener("click", function () {
-        state.columns = state.columns.filter(function (c) { return c.key !== col.key; });
-        closeCenterModal();
-        renderTable();
-        toast('Removed column "' + col.label + '"');
-      });
-    }
-
-    var cancelBtn = document.createElement("button");
-    cancelBtn.className = "btn";
-    cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", closeCenterModal);
-
-    var saveBtn = document.createElement("button");
-    saveBtn.className = "btn primary";
-    saveBtn.textContent = "Save";
-    saveBtn.addEventListener("click", function () {
-      var val = $("renameInput").value.trim();
-      if (val) col.label = val;
-      var allTabIds = TAB_DEFS.map(function (d) { return d.id; });
-      col.tabs = (selectedTabs.size === allTabIds.length) ? null : Array.from(selectedTabs);
-      closeCenterModal();
-      renderTable();
-    });
-
-    actions.appendChild(removeBtn);
-    actions.appendChild(cancelBtn);
-    actions.appendChild(saveBtn);
-    centerModal.appendChild(actions);
-
-    openCenterModal();
   }
 
   function escapeAttr(s) {
@@ -2977,6 +2758,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
           var v = select.value;
           row[col.key] = v === "" ? null : v;
           cleanupSelect();
+          markAutoWidthsDirty();
           renderTable();
         }
         function cleanupSelect() {
@@ -3016,6 +2798,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
           row[col.key] = v === "" ? null : v;
         }
         cleanup();
+        markAutoWidthsDirty();
         renderTable();
       }
       function cancel() { cleanup(); }
@@ -3030,16 +2813,6 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       input.addEventListener("blur", commit);
       input.addEventListener("click", function (e) { e.stopPropagation(); });
     }
-  }
-
-  function reorderColumns(draggedKey, targetKey, before) {
-    var fromIdx = state.columns.findIndex(function (c) { return c.key === draggedKey; });
-    if (fromIdx === -1) return;
-    var moved = state.columns.splice(fromIdx, 1)[0];
-    var toIdx = state.columns.findIndex(function (c) { return c.key === targetKey; });
-    if (toIdx === -1) { state.columns.splice(fromIdx, 0, moved); return; }
-    state.columns.splice(before ? toIdx : toIdx + 1, 0, moved);
-    renderTable();
   }
 
   function reorderRows(draggedId, targetId, before) {
@@ -3060,6 +2833,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     state.rows = state.rows.filter(function (r) { return r.__id !== id; });
     renumberRanks();
     if (state.activePanelId === id) closePanel();
+    markAutoWidthsDirty();
     renderTable();
     toast((row.NAME || "Prospect") + " removed");
   }
@@ -4289,6 +4063,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       row[key] = v === "" ? null : (isNumber ? parseFloat(v) : v);
       $(elId).style.backgroundColor = combineHeatColor(row, key) || "";
       updateCombinePercentileLabel(elId, row, key);
+      markAutoWidthsDirty();
       renderTable();
     });
   }
@@ -4337,6 +4112,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     row.AGE = trimmed === "" ? null : formatAgeValue(trimmed);
     $("bannerAge").value = row.AGE || "";
     updateAgeInputColor();
+    markAutoWidthsDirty();
     renderTable();
   });
   $("bannerAge").addEventListener("mousedown", function () {
@@ -4671,6 +4447,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     doneBtn.addEventListener("click", function () {
       row.BOWLS = Array.from(selected);
       closeCenterModal();
+      markAutoWidthsDirty();
       renderTable();
       if (state.activePanelId === row.__id) renderPanelBannerLogos(row);
     });
@@ -4932,67 +4709,6 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     if (e.target === centerOverlay) closeCenterModal();
   });
 
-  $("addColBtn").addEventListener("click", function () {
-    if (!canEdit) return;
-    centerModal.innerHTML = "";
-    var h = document.createElement("h3");
-    h.textContent = "Add column";
-    centerModal.appendChild(h);
-
-    var nameField = document.createElement("div");
-    nameField.className = "field";
-    nameField.innerHTML = '<label>Column name</label><input id="newColName" placeholder="e.g. Grade">';
-    centerModal.appendChild(nameField);
-
-    var typeField = document.createElement("div");
-    typeField.className = "field";
-    typeField.innerHTML = '<label>Type</label><select id="newColType"><option value="text">Text</option><option value="number">Number</option></select>';
-    centerModal.appendChild(typeField);
-
-    var tabsLabel = document.createElement("div");
-    tabsLabel.className = "popover-title";
-    tabsLabel.style.marginTop = "14px";
-    tabsLabel.textContent = "Show on tabs";
-    centerModal.appendChild(tabsLabel);
-
-    var tabsGrid = document.createElement("div");
-    tabsGrid.className = "chip-grid";
-    var selectedTabs = new Set(TAB_DEFS.map(function (d) { return d.id; }));
-    buildTabChips(tabsGrid, selectedTabs);
-    centerModal.appendChild(tabsGrid);
-
-    var actions = document.createElement("div");
-    actions.className = "center-modal-actions";
-    var cancelBtn = document.createElement("button");
-    cancelBtn.className = "btn";
-    cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", closeCenterModal);
-    var saveBtn = document.createElement("button");
-    saveBtn.className = "btn primary";
-    saveBtn.textContent = "Add column";
-    saveBtn.addEventListener("click", function () {
-      var name = $("newColName").value.trim();
-      if (!name) { toast("Give the column a name"); return; }
-      var key = "custom_" + name.toLowerCase().replace(/[^a-z0-9]+/g, "_") + "_" + Date.now().toString(36);
-      var type = $("newColType").value;
-      var allTabIds = TAB_DEFS.map(function (d) { return d.id; });
-      var col = { key: key, label: name, type: type, editable: true, removable: true };
-      if (selectedTabs.size !== allTabIds.length) col.tabs = Array.from(selectedTabs);
-      state.columns.push(col);
-      state.colWidths[key] = type === "number" ? 100 : 150;
-      state.colAutoFit[key] = true;
-      state.rows.forEach(function (r) { r[key] = null; });
-      closeCenterModal();
-      renderTable();
-      toast('Added column "' + name + '"');
-    });
-    actions.appendChild(cancelBtn);
-    actions.appendChild(saveBtn);
-    centerModal.appendChild(actions);
-
-    openCenterModal();
-    setTimeout(function () { $("newColName").focus(); }, 30);
-  });
 
   $("addRowBtn").addEventListener("click", function () {
     if (!canEdit) return;
@@ -5000,6 +4716,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     state.columns.forEach(function (c) { blank[c.key] = null; });
     state.rows.push(blank);
     renumberRanks();
+    markAutoWidthsDirty();
     renderTable();
     toast("New prospect added at bottom");
     openPanel(blank.__id);
@@ -5249,6 +4966,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         state.search = "";
         state.activeTab = "ALL";
         searchInput.value = "";
+        markAutoWidthsDirty();
         renderTable();
         toast("CSV imported (" + newRows.length + " prospects)");
       } catch (err) {
@@ -5289,6 +5007,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         state.search = "";
         state.activeTab = "ALL";
         searchInput.value = "";
+        markAutoWidthsDirty();
         renderTable();
         toast("Snapshot imported");
       } catch (err) {
