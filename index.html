@@ -45,7 +45,7 @@ body{
   -webkit-font-smoothing: antialiased;
 }
 
-::selection{ background: var(--turf-dim); color: var(--text); }
+::selection{ background: #C7E6FA; color: var(--text); }
 
 .app{
   position: relative;
@@ -325,21 +325,20 @@ body.view-only .transfer-add-icon{
 /* ---------- Tabs ---------- */
 .tab-bar{
   display:flex;
-  gap: 4px;
+  gap: 6px;
   overflow-x: auto;
   padding-bottom: 2px;
   margin-bottom: 14px;
-  border-bottom: 1px solid var(--border);
 }
 .tab-bar::-webkit-scrollbar{ height: 6px; }
 .tab-btn{
   display:flex;
   align-items:center;
   gap: 7px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 9px 13px;
+  background: rgba(255,255,255,0.14);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 8px;
+  padding: 8px 14px;
   color: #FFFFFF;
   font-family: var(--font-mono);
   font-size: 12.5px;
@@ -347,24 +346,25 @@ body.view-only .transfer-add-icon{
   letter-spacing: 0.4px;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 0.12s, border-color 0.12s;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
-.tab-btn:hover{ color: #FFFFFF; opacity: 0.8; }
+.tab-btn:hover{ background: rgba(255,255,255,0.24); border-color: rgba(255,255,255,0.32); }
 .tab-btn.active{
-  color: var(--turf-bright);
-  border-bottom-color: var(--turf-bright);
+  background: var(--turf);
+  border-color: var(--turf);
+  color: #FFFFFF;
 }
 .tab-btn .tab-count{
   font-family: var(--font-body);
   font-size: 10px;
-  color: var(--text-dim);
-  background: var(--surface-2);
+  color: #FFFFFF;
+  background: rgba(255,255,255,0.22);
   border-radius: 20px;
   padding: 1px 7px;
 }
 .tab-btn.active .tab-count{
   color: var(--turf-bright);
-  background: var(--turf-dim);
+  background: #FFFFFF;
 }
 
 /* ---------- Table ---------- */
@@ -667,6 +667,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   opacity: 0;
   pointer-events: none;
   transition: transform 0.18s cubic-bezier(.2,.8,.3,1), opacity 0.18s;
+  will-change: transform, opacity;
   display:flex;
   flex-direction:column;
   box-shadow: 0 30px 80px rgba(0,0,0,0.35);
@@ -4235,13 +4236,14 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     if (!row) return;
     state.activePanelId = id;
 
+    overlay.classList.add("open");
+    panel.classList.add("open");
+    requestAnimationFrame(function () { overlay.classList.add("show"); });
+
     var idx = state.rows.indexOf(row);
     $("panelPos").value = row.POS || "";
-    fitPosBadge(row.POS || "");
     $("panelCollege").value = row.COLLEGE || "";
-    fitPanelCollege(row.COLLEGE || "");
     $("panelName").value = row.NAME || "";
-    fitPanelName(row.NAME || "");
 
     renderHeadshot(row);
     renderCollegeLogo(row);
@@ -4252,9 +4254,11 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     renderRecruiting(row);
     renderStrengthsWeaknesses(row);
 
-    overlay.classList.add("open");
-    panel.classList.add("open");
-    requestAnimationFrame(function () { overlay.classList.add("show"); });
+    requestAnimationFrame(function () {
+      fitPosBadge(row.POS || "");
+      fitPanelCollege(row.COLLEGE || "");
+      fitPanelName(row.NAME || "");
+    });
   }
 
   function closePanel() {
