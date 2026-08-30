@@ -609,7 +609,8 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   border: 1px solid var(--border);
   border-radius: 16px;
   z-index: 101;
-  transform: translate(-50%, -50%) scale(0.96);
+  --panel-fit-scale: 1;
+  transform: translate(-50%, -50%) scale(calc(0.96 * var(--panel-fit-scale)));
   opacity: 0;
   pointer-events: none;
   transition: transform 0.18s cubic-bezier(.2,.8,.3,1), opacity 0.18s;
@@ -619,9 +620,12 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   box-shadow: 0 30px 80px rgba(0,0,0,0.35);
 }
 .panel.open{
-  transform: translate(-50%, -50%) scale(1);
+  transform: translate(-50%, -50%) scale(var(--panel-fit-scale));
   opacity: 1;
   pointer-events: auto;
+}
+@media (min-width: 641px) and (max-width: 1228px){
+  .panel{ width: 1180px; }
 }
 
 .panel-head{
@@ -3990,6 +3994,30 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     updateCombinePercentileLabel("bannerBp", row, "BP");
   }
 
+  var PANEL_DESIGN_WIDTH = 1180;
+  var PANEL_MIN_SCALE = 0.55;
+  function updatePanelFitScale() {
+    var hScale = 1;
+    if (window.innerWidth > 640 && window.innerWidth < 1229) {
+      hScale = Math.min(1, (window.innerWidth * 0.96) / PANEL_DESIGN_WIDTH);
+    }
+
+    var vScale = 1;
+    var panelHead = panel.querySelector(".panel-head");
+    var panelBody = $("panelBody");
+    if (panelHead && panelBody) {
+      var naturalHeight = panelHead.offsetHeight + panelBody.scrollHeight;
+      var maxH = window.innerHeight * 0.88;
+      if (naturalHeight > 0) {
+        vScale = Math.min(1, maxH / naturalHeight);
+      }
+    }
+
+    var scale = Math.max(PANEL_MIN_SCALE, Math.min(hScale, vScale));
+    panel.style.setProperty("--panel-fit-scale", scale);
+  }
+  window.addEventListener("resize", updatePanelFitScale);
+
   function openPanel(id) {
     var row = state.rows.filter(function (r) { return r.__id === id; })[0];
     if (!row) return;
@@ -4012,6 +4040,8 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     renderAthleticism(row);
     renderRecruiting(row);
     renderStrengthsWeaknesses(row);
+
+    updatePanelFitScale();
 
     requestAnimationFrame(function () {
       fitPosBadge(row.POS || "");
