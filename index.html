@@ -1778,15 +1778,15 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       <div class="report-col">
         <div class="report-box">
           <div class="report-box-header report-box-header-flex">
-            <span>Strengths</span>
             <button type="button" class="header-add-btn plus" id="strengthsAddBtn" title="Add strength">+</button>
+            <span>Strengths</span>
           </div>
           <div class="report-box-body" id="strengthsBody"></div>
         </div>
         <div class="report-box">
           <div class="report-box-header report-box-header-flex">
-            <span>Weaknesses</span>
             <button type="button" class="header-add-btn minus" id="weaknessesAddBtn" title="Add weakness">&minus;</button>
+            <span>Weaknesses</span>
           </div>
           <div class="report-box-body" id="weaknessesBody"></div>
         </div>
@@ -2097,12 +2097,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     if (!currentUser) return;
 
     var configPayload = {
-      columns: state.columns,
-      colWidths: state.colWidths,
-      colAutoFit: state.colAutoFit,
-      activeTab: state.activeTab,
-      sortKey: state.sortKey,
-      sortDir: state.sortDir
+      columns: state.columns
     };
     db.collection("meta").doc("config").set(configPayload).catch(function () {});
 
@@ -2180,11 +2175,6 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       if (oldSig !== newSig) markAutoWidthsDirty();
       state.columns = data.columns;
     }
-    if (data.colWidths) state.colWidths = data.colWidths;
-    if (data.colAutoFit) state.colAutoFit = data.colAutoFit;
-    if (data.activeTab) state.activeTab = data.activeTab;
-    if (data.sortKey !== undefined) state.sortKey = data.sortKey;
-    if (data.sortDir) state.sortDir = data.sortDir;
     renderTable();
   }
 
@@ -2208,12 +2198,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       });
       return chain.then(function () {
         return db.collection("meta").doc("config").set({
-          columns: DEFAULT_COLUMNS.slice(),
-          colWidths: {},
-          colAutoFit: {},
-          activeTab: "ALL",
-          sortKey: null,
-          sortDir: "asc"
+          columns: DEFAULT_COLUMNS.slice()
         });
       });
     });
