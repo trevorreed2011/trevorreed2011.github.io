@@ -2287,6 +2287,24 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     renderTable();
   });
 
+  function groupRowsByAllTabOrder(rows) {
+    var grouped = [];
+    var usedIds = {};
+    TAB_DEFS.forEach(function (def) {
+      if (def.id === "ALL") return;
+      rows.forEach(function (r) {
+        if (!usedIds[r.__id] && rowMatchesTab(r, def.id)) {
+          grouped.push(r);
+          usedIds[r.__id] = true;
+        }
+      });
+    });
+    rows.forEach(function (r) {
+      if (!usedIds[r.__id]) grouped.push(r);
+    });
+    return grouped;
+  }
+
   function getVisibleRows() {
     var rows = state.rows.slice();
 
@@ -2304,21 +2322,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       rows = rows.filter(function (r) { return state.posFilter.has(String(r.POS)); });
     }
     if ((!state.activeTab || state.activeTab === "ALL") && !state.sortKey) {
-      var grouped = [];
-      var usedIds = {};
-      TAB_DEFS.forEach(function (def) {
-        if (def.id === "ALL") return;
-        rows.forEach(function (r) {
-          if (!usedIds[r.__id] && rowMatchesTab(r, def.id)) {
-            grouped.push(r);
-            usedIds[r.__id] = true;
-          }
-        });
-      });
-      rows.forEach(function (r) {
-        if (!usedIds[r.__id]) grouped.push(r);
-      });
-      rows = grouped;
+      rows = groupRowsByAllTabOrder(rows);
     }
     if (state.sortKey) {
       var key = state.sortKey;
@@ -4633,6 +4637,31 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     });
   }
 
+  function fetchHeadshotForRow(row) {
+    if (row.HEADSHOT) return Promise.resolve();
+    function fetchHeadshotWithLogo() {
+      var teamId = teamIdFromLogo(row.LOGO);
+      if (!teamId) return Promise.resolve();
+      return fetchTeamRoster(teamId).then(function (athletes) {
+        var found = matchHeadshot(athletes, row.NAME);
+        if (found) row.HEADSHOT = found;
+      });
+    }
+    if (row.LOGO) return fetchHeadshotWithLogo();
+    if (!row.COLLEGE) return Promise.resolve();
+    return fetchAllTeams().then(function (teams) {
+      var match = matchCollegeLogo(teams, row.COLLEGE);
+      if (match) row.LOGO = match.logo;
+      return fetchHeadshotWithLogo();
+    });
+  }
+
+  function fetchAllMissingHeadshots() {
+    return Promise.all(state.rows.map(function (row) {
+      return fetchHeadshotForRow(row).catch(function () {});
+    }));
+  }
+
   function renderHeadshot(row) {
     if (row.HEADSHOT) {
       panelHeadshotImg.src = row.HEADSHOT;
@@ -4751,20 +4780,24 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   }
 
   $("exportJsonBtn").addEventListener("click", function () {
-    var exportRows = state.rows.map(function (r) {
-      var copy = Object.assign({}, r);
-      if (copy.AGE !== null && copy.AGE !== undefined && copy.AGE !== "") {
-        copy.AGE = formatAgeValue(copy.AGE);
-      }
-      return copy;
+    toast("Fetching missing headshots\u2026 this may take a moment");
+    fetchAllMissingHeadshots().then(function () {
+      renderTable();
+      var exportRows = state.rows.map(function (r) {
+        var copy = Object.assign({}, r);
+        if (copy.AGE !== null && copy.AGE !== undefined && copy.AGE !== "") {
+          copy.AGE = formatAgeValue(copy.AGE);
+        }
+        return copy;
+      });
+      var payload = {
+        columns: state.columns,
+        rows: exportRows
+      };
+      download("big-board-snapshot.json", JSON.stringify(payload, null, 2), "application/json");
+      toast("Snapshot exported");
+      morePopover.classList.remove("open");
     });
-    var payload = {
-      columns: state.columns,
-      rows: exportRows
-    };
-    download("big-board-snapshot.json", JSON.stringify(payload, null, 2), "application/json");
-    toast("Snapshot exported");
-    morePopover.classList.remove("open");
   });
 
   var CSV_EXTRA_FIELDS = [
@@ -4788,11 +4821,15 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     { label: "Top 5 Avg MPH Year", key: "TOP5MPH_YEAR" },
     { label: "Stars", key: "STARS" },
     { label: "Class Of", key: "CLASS" },
-    { label: "Hometown", key: "HOMETOWN" }
+    { label: "Hometown", key: "HOMETOWN" },
+    { label: "Headshot", key: "HEADSHOT" }
   ];
-  var CSV_COMPOSITE_LABELS = ["Multi-Sport", "Strengths", "Weaknesses", "Scouting Traits", "PFF Metrics"];
+  var CSV_COMPOSITE_LABELS = ["Multi-Sport", "Strengths", "Weaknesses", "Scouting Traits", "PFF Metrics", "Injury History", "Transfer Schools"];
 
   $("exportCsvBtn").addEventListener("click", function () {
+    toast("Fetching missing headshots\u2026 this may take a moment");
+    fetchAllMissingHeadshots().then(function () {
+      renderTable();
     var cols = state.columns;
     var customKeys = new Set();
     state.rows.forEach(function (r) { Object.keys(r.__custom || {}).forEach(function (k) { customKeys.add(k); }); });
@@ -4805,7 +4842,8 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       .concat(CSV_COMPOSITE_LABELS);
     var lines = [headers.map(csvEscape).join(",")];
 
-    state.rows.forEach(function (r) {
+    var exportRows = groupRowsByAllTabOrder(state.rows.slice());
+    exportRows.forEach(function (r) {
       var vals = [r.RANK];
       cols.forEach(function (c) {
         if (c.key === "BOWLS") {
@@ -4830,11 +4868,18 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       vals.push((r.WEAKNESSES || []).filter(function (t) { return t; }).join(" | "));
       vals.push(r.SCOUT ? Object.keys(r.SCOUT).map(function (k) { return r.SCOUT[k] ? (k + ": " + r.SCOUT[k]) : null; }).filter(Boolean).join("; ") : "");
       vals.push(r.PFF ? Object.keys(r.PFF).map(function (k) { return (r.PFF[k] !== null && r.PFF[k] !== undefined) ? (k + ": " + r.PFF[k]) : null; }).filter(Boolean).join("; ") : "");
+      vals.push((r.INJURIES || []).filter(function (inj) { return inj.logged; }).map(function (inj) {
+        var dateStr = [inj.month, inj.year].filter(Boolean).join(" ");
+        var sevStr = inj.severity ? " (" + inj.severity + ")" : "";
+        return (dateStr ? dateStr + " - " : "") + inj.text + sevStr;
+      }).join(" | "));
+      vals.push((r.TRANSFERS || []).join("; "));
       lines.push(vals.map(csvEscape).join(","));
     });
     download("big-board.csv", lines.join("\r\n"), "text/csv");
     toast("CSV exported");
     morePopover.classList.remove("open");
+    });
   });
 
   function parseCSV(text) {
@@ -4898,6 +4943,33 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     return obj;
   }
 
+  function parseCsvInjuryList(cell) {
+    if (!cell) return [];
+    return cell.split("|").map(function (s) { return s.trim(); }).filter(Boolean).map(function (entry) {
+      var severity = "";
+      var m = entry.match(/\s*\(([^)]+)\)\s*$/);
+      if (m) {
+        severity = m[1].trim();
+        entry = entry.slice(0, m.index).trim();
+      }
+      var month = "", year = "", text = entry;
+      var dashIdx = entry.indexOf("\u2014");
+      if (dashIdx === -1) dashIdx = entry.search(/\s-\s/);
+      if (dashIdx !== -1) {
+        var datePart = entry.slice(0, dashIdx).trim();
+        text = entry.slice(dashIdx).replace(/^\s*(\u2014|-)\s*/, "").trim();
+        var dateBits = datePart.split(/\s+/);
+        if (dateBits.length === 2) {
+          month = dateBits[0];
+          year = dateBits[1];
+        } else if (dateBits.length === 1) {
+          year = dateBits[0];
+        }
+      }
+      return { month: month, year: year, text: text, severity: severity, logged: true };
+    });
+  }
+
   $("importCsvBtn").addEventListener("click", function () {
     $("importCsvFile").click();
   });
@@ -4930,6 +5002,8 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         var weaknessesIdx = headerIndex["Weaknesses"];
         var scoutIdx = headerIndex["Scouting Traits"];
         var pffIdx = headerIndex["PFF Metrics"];
+        var injuryIdx = headerIndex["Injury History"];
+        var transferIdx = headerIndex["Transfer Schools"];
         var bowlsIdx = headerIndex["Bowl"];
         var ageIdx = headerIndex["Age"];
 
@@ -4969,6 +5043,10 @@ tr.dragging .drag-handle{ cursor: grabbing; }
           row.WEAKNESSES = weaknessesIdx !== undefined ? parseCsvBulletList(cells[weaknessesIdx]) : [];
           row.SCOUT = scoutIdx !== undefined ? parseCsvKeyValueMap(cells[scoutIdx]) : {};
           row.PFF = pffIdx !== undefined ? parseCsvKeyValueMap(cells[pffIdx]) : {};
+          row.INJURIES = injuryIdx !== undefined ? parseCsvInjuryList(cells[injuryIdx]) : [];
+          row.TRANSFERS = transferIdx !== undefined
+            ? (cells[transferIdx] || "").split(";").map(function (s) { return s.trim(); }).filter(Boolean)
+            : [];
 
           newRows.push(row);
         }
