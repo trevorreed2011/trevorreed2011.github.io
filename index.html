@@ -1186,6 +1186,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   gap: 6px;
 }
 .scout-row-pair .scout-field{ flex: 0 0 auto; }
+.panel.hide-speed-metrics .scout-field-hideable{ display: none; }
 .scout-field{
   display:flex;
   flex-direction:row;
@@ -1817,7 +1818,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
                   </div>
                   <label>COM</label>
                 </div>
-                <div class="scout-field">
+                <div class="scout-field scout-field-hideable">
                   <div class="ring-badge">
                     <div class="ring-fill" id="athMphRingFill"></div>
                     <div class="ring-inner"></div>
@@ -1826,10 +1827,10 @@ tr.dragging .drag-handle{ cursor: grabbing; }
                   <label>POS MPH %</label>
                 </div>
               </div>
-              <div class="scout-field"><input type="text" id="athTopMph" placeholder="—"><label>Top MPH</label></div>
-              <div class="scout-field"><select id="athTopMphYear"></select><label>Top MPH Year</label></div>
-              <div class="scout-field"><input type="text" id="athTop5Mph" placeholder="—"><label>Top 5 Avg MPH</label></div>
-              <div class="scout-field"><select id="athTop5MphYear"></select><label>Top 5 Avg MPH Year</label></div>
+              <div class="scout-field scout-field-hideable"><input type="text" id="athTopMph" placeholder="—"><label>Top MPH</label></div>
+              <div class="scout-field scout-field-hideable"><select id="athTopMphYear"></select><label>Top MPH Year</label></div>
+              <div class="scout-field scout-field-hideable"><input type="text" id="athTop5Mph" placeholder="—"><label>Top 5 Avg MPH</label></div>
+              <div class="scout-field scout-field-hideable"><select id="athTop5MphYear"></select><label>Top 5 Avg MPH Year</label></div>
             </div>
           </div>
         </div>
@@ -2014,6 +2015,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         var text = (val === null || val === undefined || val === "") ? "\u2014" : String(val);
         var w = measureTextWidth(text, cellFont);
         if (isPos) w += 22;
+        if (col.key === "NAME" && row.INJURIES && row.INJURIES.some(function (inj) { return inj.logged; })) w += 24;
         if (w > maxContentWidth) maxContentWidth = w;
       });
       var headerWidth = measureTextWidth(col.label.toUpperCase(), headerFont) + 28;
@@ -3725,7 +3727,9 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       rm.className = "bullet-remove";
       rm.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>';
       rm.addEventListener("click", function () {
+        var wasLogged = !!injury.logged;
         row.INJURIES.splice(idx, 1);
+        if (wasLogged) markAutoWidthsDirty();
         renderScoutingReport(row);
       });
 
@@ -3750,6 +3754,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       function maybeLockInjury() {
         if (injury.month && injury.year && injury.text && injury.text.trim() !== "") {
           injury.logged = true;
+          markAutoWidthsDirty();
         }
         renderScoutingReport(row);
       }
@@ -4253,11 +4258,19 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     el.style.setProperty("--fill", deg + "deg");
   }
 
+  function formatOneDecimal(val) {
+    if (val === null || val === undefined || val === "") return "";
+    var num = parseFloat(val);
+    if (isNaN(num)) return val;
+    return num.toFixed(1);
+  }
+
+  var HIDE_SPEED_METRICS_POS = { OT: true, OG: true, C: true, IDL: true, EDGE: true };
   function renderAthleticism(row) {
     populateAthYearSelect("athTop5MphYear");
     populateAthYearSelect("athTopMphYear");
-    $("athPai").value = (row.PAI === null || row.PAI === undefined) ? "" : row.PAI;
-    $("athCom").value = (row.COM === null || row.COM === undefined) ? "" : row.COM;
+    $("athPai").value = formatOneDecimal(row.PAI);
+    $("athCom").value = formatOneDecimal(row.COM);
     $("athMph").value = (row.MPH === null || row.MPH === undefined) ? "" : row.MPH;
     $("athTopMph").value = (row.TOPMPH === null || row.TOPMPH === undefined) ? "" : row.TOPMPH;
     $("athTopMphYear").value = row.TOPMPH_YEAR || "";
@@ -4266,6 +4279,8 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     setRingFill("athPaiRingFill", row.PAI);
     setRingFill("athComRingFill", row.COM);
     setRingFillScaled("athMphRingFill", row.MPH, 100);
+    var firstPos = row.POS ? String(row.POS).split("/")[0].trim() : "";
+    panel.classList.toggle("hide-speed-metrics", !!HIDE_SPEED_METRICS_POS[firstPos]);
   }
 
   var STAR_SVG_PATH = "M12 2.5 L14.9 9 L22 9.6 L16.6 14.3 L18.3 21.3 L12 17.6 L5.7 21.3 L7.4 14.3 L2 9.6 L9.1 9 Z";
