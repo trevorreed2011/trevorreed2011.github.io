@@ -1576,6 +1576,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   width: 320px;
   box-shadow: var(--shadow);
 }
+.center-modal.center-modal-wide{ width: 380px; }
 .center-modal h3{
   font-family: var(--font-display);
   text-transform: uppercase;
@@ -1590,6 +1591,75 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   gap: 8px;
   margin-top: 6px;
 }
+
+.position-log-table{
+  display:flex;
+  flex-direction:column;
+  gap: 6px;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 4px 0 14px;
+}
+.position-log-row{
+  display:grid;
+  grid-template-columns: 48px repeat(3, 58px);
+  justify-content: start;
+  align-items:center;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.position-log-header-row{
+  background: none;
+  border: none;
+  padding: 0 10px;
+}
+.position-log-cat-head{
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  text-align: center;
+}
+.position-log-label{
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: 0.4px;
+}
+.position-log-cell{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap: 4px;
+}
+.position-log-date{
+  font-size: 13px;
+  color: var(--text);
+  min-width: 20px;
+  text-align: right;
+}
+.position-log-date-empty{
+  color: var(--text-dim);
+}
+.position-log-check-btn{
+  flex-shrink: 0;
+  background:none;
+  border:none;
+  cursor:pointer;
+  color: #2E9E4C;
+  font-family: var(--font-mono);
+  font-weight: 900;
+  padding: 0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.position-log-check-btn:hover{ color: #237A3B; }
 
 .toast{
   position: fixed;
@@ -1678,6 +1748,8 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
       Prospect
     </button>
+
+    <button class="btn" id="positionLogBtn">Updates</button>
 
     <div class="filter-pop-wrap">
       <button class="btn icon-only" id="moreBtn" title="Import / export / reset">
@@ -1941,7 +2013,8 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     dragColKey: null,
     activeTab: "ALL",
     colWidths: {},
-    colAutoFit: {}
+    colAutoFit: {},
+    positionLog: {}
   };
 
   var canEdit = true;
@@ -2214,7 +2287,15 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     seedIfEmpty().finally(function () {
       db.collection("prospects").onSnapshot(applyProspectsSnapshot);
       db.collection("meta").doc("config").onSnapshot(applyConfigSnapshot);
+      db.collection("meta").doc("positionLog").onSnapshot(applyPositionLogSnapshot);
     });
+  }
+
+  function applyPositionLogSnapshot(doc) {
+    state.positionLog = doc.exists ? (doc.data() || {}) : {};
+    if (centerOverlay.classList.contains("open") && centerModal.querySelector("#positionLogTable")) {
+      renderPositionLogModal();
+    }
   }
 
   /* ---------------- Height parsing for sort ---------------- */
@@ -4762,10 +4843,115 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   }
   function closeCenterModal() {
     centerOverlay.classList.remove("open");
+    centerModal.classList.remove("center-modal-wide");
     centerModal.innerHTML = "";
   }
   centerOverlay.addEventListener("click", function (e) {
     if (e.target === centerOverlay) closeCenterModal();
+  });
+
+  var POSITION_LOG_CATEGORIES = [
+    { key: "RANK", label: "RANK" },
+    { key: "HTWT", label: "HT/WT" },
+    { key: "BDAY", label: "BDAY" }
+  ];
+
+  function formatLogDate(iso) {
+    var d = new Date(iso + "T00:00:00");
+    if (isNaN(d.getTime())) return iso;
+    return (d.getMonth() + 1) + "/" + d.getDate();
+  }
+
+  function markPositionUpdated(posId, categoryKey) {
+    var today = new Date();
+    var iso = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+    if (!state.positionLog[posId] || typeof state.positionLog[posId] !== "object") state.positionLog[posId] = {};
+    state.positionLog[posId][categoryKey] = iso;
+    db.collection("meta").doc("positionLog").set(state.positionLog, { merge: true }).catch(function () {});
+    renderPositionLogModal();
+    var def = TAB_DEFS.filter(function (d) { return d.id === posId; })[0];
+    var cat = POSITION_LOG_CATEGORIES.filter(function (c) { return c.key === categoryKey; })[0];
+    toast((def ? def.label : posId) + " " + (cat ? cat.label : categoryKey) + " marked as updated today");
+  }
+
+  function renderPositionLogModal() {
+    centerModal.innerHTML = "";
+    centerModal.classList.add("center-modal-wide");
+    var h = document.createElement("h3");
+    h.textContent = "Position Update Log";
+    centerModal.appendChild(h);
+
+    var table = document.createElement("div");
+    table.id = "positionLogTable";
+    table.className = "position-log-table";
+
+    var headerRow = document.createElement("div");
+    headerRow.className = "position-log-row position-log-header-row";
+    var headerLabel = document.createElement("span");
+    headerLabel.className = "position-log-label";
+    headerRow.appendChild(headerLabel);
+    POSITION_LOG_CATEGORIES.forEach(function (cat) {
+      var catHead = document.createElement("span");
+      catHead.className = "position-log-cat-head";
+      catHead.textContent = cat.label;
+      headerRow.appendChild(catHead);
+    });
+    table.appendChild(headerRow);
+
+    TAB_DEFS.forEach(function (def) {
+      if (def.id === "ALL") return;
+      var row = document.createElement("div");
+      row.className = "position-log-row";
+
+      var label = document.createElement("span");
+      label.className = "position-log-label";
+      label.textContent = def.label;
+      row.appendChild(label);
+
+      var posEntry = (state.positionLog[def.id] && typeof state.positionLog[def.id] === "object") ? state.positionLog[def.id] : {};
+
+      POSITION_LOG_CATEGORIES.forEach(function (cat) {
+        var cell = document.createElement("span");
+        cell.className = "position-log-cell";
+
+        var dateSpan = document.createElement("span");
+        dateSpan.className = "position-log-date";
+        var dateVal = posEntry[cat.key];
+        dateSpan.textContent = dateVal ? formatLogDate(dateVal) : "\u2014";
+        if (!dateVal) dateSpan.classList.add("position-log-date-empty");
+        cell.appendChild(dateSpan);
+
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "position-log-check-btn";
+        btn.title = "Mark " + cat.label + " updated today";
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12l6 6L20 6"/></svg>';
+        if (!canEdit) { btn.disabled = true; btn.style.opacity = "0.4"; }
+        btn.addEventListener("click", function () { markPositionUpdated(def.id, cat.key); });
+        cell.appendChild(btn);
+
+        row.appendChild(cell);
+      });
+
+      table.appendChild(row);
+    });
+
+    centerModal.appendChild(table);
+
+    var actions = document.createElement("div");
+    actions.className = "center-modal-actions";
+    var closeBtn = document.createElement("button");
+    closeBtn.className = "btn";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", closeCenterModal);
+    actions.appendChild(closeBtn);
+    centerModal.appendChild(actions);
+
+    openCenterModal();
+  }
+
+  $("positionLogBtn").addEventListener("click", function () {
+    renderPositionLogModal();
   });
 
 
