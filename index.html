@@ -1449,6 +1449,18 @@ tr.dragging .drag-handle{ cursor: grabbing; }
 }
 .bullet-row:hover .bullet-remove{ opacity: 1; }
 .bullet-remove:hover{ color: var(--crimson); }
+.bullet-edit{
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  display:flex;
+  opacity: 0;
+}
+.bullet-row:hover .bullet-edit{ opacity: 1; }
+.bullet-edit:hover{ color: var(--turf-bright); }
 .field-row{
   display:grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1660,6 +1672,22 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   justify-content:center;
 }
 .position-log-check-btn:hover{ color: #237A3B; }
+
+.save-error-banner{
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+  background: #C1502E;
+  color: #FFFFFF;
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: center;
+  padding: 10px 16px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+}
 
 .toast{
   position: fixed;
@@ -2172,13 +2200,40 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     saveTimer = setTimeout(doSave, 400);
   }
 
+  var saveErrorBannerEl = null;
+  function showSaveErrorBanner() {
+    if (saveErrorBannerEl) return;
+    saveErrorBannerEl = document.createElement("div");
+    saveErrorBannerEl.className = "save-error-banner";
+    saveErrorBannerEl.textContent = "\u26A0 Some changes aren't saving \u2014 check your connection. Retrying\u2026";
+    document.body.appendChild(saveErrorBannerEl);
+  }
+  function hideSaveErrorBanner() {
+    if (saveErrorBannerEl) {
+      saveErrorBannerEl.remove();
+      saveErrorBannerEl = null;
+    }
+  }
+  var saveRetryTimer = null;
+  function scheduleSaveRetry() {
+    if (saveRetryTimer) return;
+    saveRetryTimer = setTimeout(function () {
+      saveRetryTimer = null;
+      doSave();
+    }, 8000);
+  }
+
   function doSave() {
     if (!currentUser) return;
 
     var configPayload = {
       columns: state.columns
     };
-    db.collection("meta").doc("config").set(configPayload).catch(function () {});
+    db.collection("meta").doc("config").set(configPayload).catch(function (err) {
+      console.error("Big Board: config save failed \u2014", err);
+      showSaveErrorBanner();
+      scheduleSaveRetry();
+    });
 
     var ops = [];
     var seenIds = {};
@@ -2186,28 +2241,51 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       seenIds[row.__id] = true;
       var json = JSON.stringify(row);
       if (lastSavedSnapshot[row.__id] !== json) {
-        ops.push({ type: "set", id: row.__id, data: row });
-        lastSavedSnapshot[row.__id] = json;
+        ops.push({ type: "set", id: row.__id, data: row, json: json });
       }
     });
     Object.keys(lastSavedSnapshot).forEach(function (id) {
       if (!seenIds[id]) {
         ops.push({ type: "delete", id: id });
-        delete lastSavedSnapshot[id];
       }
     });
     if (ops.length === 0) return;
 
+    var chunks = [];
     for (var i = 0; i < ops.length; i += 450) {
-      var chunk = ops.slice(i, i + 450);
+      chunks.push(ops.slice(i, i + 450));
+    }
+    var pending = chunks.length;
+    var anyFailure = false;
+
+    function commitChunk(chunk) {
       var batch = db.batch();
       chunk.forEach(function (op) {
         var ref = db.collection("prospects").doc(op.id);
         if (op.type === "delete") batch.delete(ref);
         else batch.set(ref, op.data);
       });
-      batch.commit().catch(function () {});
+      batch.commit().then(function () {
+        // Only mark these rows as saved now that Firestore has actually
+        // confirmed the write — marking them beforehand meant a failed
+        // write was permanently mistaken for a successful one, and the
+        // edit would never be retried.
+        chunk.forEach(function (op) {
+          if (op.type === "delete") delete lastSavedSnapshot[op.id];
+          else lastSavedSnapshot[op.id] = op.json;
+        });
+        pending--;
+        if (pending === 0 && !anyFailure) hideSaveErrorBanner();
+      }).catch(function (err) {
+        console.error("Big Board: save failed for a batch of changes \u2014", err);
+        anyFailure = true;
+        showSaveErrorBanner();
+        pending--;
+        if (pending === 0) scheduleSaveRetry();
+      });
     }
+
+    chunks.forEach(commitChunk);
   }
 
   var lastKnownRowCount = 0;
@@ -3827,6 +3905,19 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         var dateStr = [injury.month, injury.year].filter(Boolean).join(" ");
         lockedText.textContent = (dateStr ? dateStr + " \u2014 " : "") + injury.text;
         wrap.appendChild(lockedText);
+
+        var editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "bullet-edit";
+        editBtn.title = "Edit injury";
+        editBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+        editBtn.addEventListener("click", function () {
+          injury.logged = false;
+          markAutoWidthsDirty();
+          renderScoutingReport(row);
+        });
+        wrap.appendChild(editBtn);
+
         wrap.appendChild(rm);
         injuryList.appendChild(wrap);
         return;
@@ -3839,6 +3930,17 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         }
         renderScoutingReport(row);
       }
+
+      wrap.addEventListener("focusout", function (e) {
+        if (wrap.contains(e.relatedTarget)) return;
+        // Defer so any click on a newly-focused element (e.g. another
+        // injury's edit/remove button) still fires before this rebuilds
+        // the section's DOM out from under it.
+        setTimeout(function () {
+          if (injury.logged) return;
+          maybeLockInjury();
+        }, 0);
+      });
 
       var monthSelect = document.createElement("select");
       monthSelect.className = "injury-date-select";
@@ -3890,7 +3992,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
         btn.appendChild(img);
         btn.addEventListener("click", function () {
           injury.severity = (injury.severity === level) ? "" : level;
-          renderScoutingReport(row);
+          maybeLockInjury();
         });
         sevWrap.appendChild(btn);
       });
