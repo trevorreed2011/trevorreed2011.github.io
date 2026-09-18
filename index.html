@@ -764,7 +764,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
 .college-input-inline{
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: #000;
   font-family: var(--font-body);
   font-size: 18px;
   font-weight: 500;
@@ -1028,7 +1028,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
 .panel-body{
   flex:1;
   overflow-y:auto;
-  padding: 16px 24px 32px;
+  padding: 16px 24px 16px;
 }
 .report-grid{
   display:flex;
@@ -1134,6 +1134,23 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   margin-bottom: 5px;
 }
 .injury-hover-row:last-child{ margin-bottom: 0; }
+.metric-hover-tooltip{
+  position: fixed;
+  z-index: 500;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 6px 10px;
+  display: none;
+  pointer-events: none;
+  font-family: var(--font-body);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+.metric-hover-tooltip.show{ display: block; }
 .injury-hover-row img{ width: 16px; height: 16px; object-fit: contain; flex-shrink: 0; }
 .injury-hover-row span{
   font-family: var(--font-body);
@@ -1563,7 +1580,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
 .add-field-btn:hover{ border-color: var(--turf); color: var(--turf-bright); }
 
 .panel-foot{
-  padding: 14px 24px;
+  padding: 0 24px 14px;
   display:flex;
   justify-content:space-between;
 }
@@ -1575,7 +1592,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   .field-row{ grid-template-columns: 1fr; }
   .panel-banner{ grid-template-columns: repeat(3, 1fr); }
   .panel{ overflow: hidden; }
-  .panel-body{ overflow-x: hidden; padding: 16px 12px 28px; }
+  .panel-body{ overflow-x: hidden; padding: 16px 12px; }
   #panelBanner{ flex-wrap: wrap; justify-content: flex-start; gap: 8px; padding: 12px 10px; }
   .panel-banner-10{ grid-template-columns: repeat(5, 1fr); }
   #panelBanner2{ flex-wrap: wrap; justify-content: flex-start; gap: 6px; padding: 12px 10px; }
@@ -1783,7 +1800,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   <div class="toolbar">
     <div class="search-wrap">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="searchInput" placeholder="Search name or college…">
+      <input type="text" id="searchInput" placeholder="Search">
     </div>
 
     <div class="toolbar-spacer"></div>
@@ -1972,11 +1989,9 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     </div>
   </div>
   <div class="panel-foot">
-    <button class="btn danger" id="panelDeleteBtn">
+    <button class="btn danger icon-only" id="panelDeleteBtn" title="Delete prospect">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
-      Delete prospect
     </button>
-    <span style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); align-self:center;">Autosaves to session</span>
   </div>
 </div>
 
@@ -1987,6 +2002,7 @@ tr.dragging .drag-handle{ cursor: grabbing; }
 
 <div class="toast" id="toast"></div>
 <div class="injury-hover-tooltip" id="injuryHoverTooltip"></div>
+<div class="metric-hover-tooltip" id="metricHoverTooltip"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -2602,6 +2618,21 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   function applyTableWidth() {
     var total = FIXED_WIDTHS.pick + FIXED_WIDTHS.drag;
     getVisibleColumns().forEach(function (col) { total += state.colWidths[col.key] || defaultWidthForCol(col); });
+
+    // If the table is narrower than its scroll container, stretch the
+    // NOTES column to fill the leftover space instead of leaving a blank
+    // gap to the right of it.
+    var scrollWrap = mainTable.parentElement;
+    if (scrollWrap) {
+      var containerWidth = scrollWrap.clientWidth;
+      if (containerWidth > total && colEls.NOTES) {
+        var extra = containerWidth - total;
+        var notesWidth = (state.colWidths.NOTES || defaultWidthForCol({ key: "NOTES" })) + extra;
+        colEls.NOTES.style.width = notesWidth + "px";
+        total = containerWidth;
+      }
+    }
+
     mainTable.style.width = total + "px";
   }
 
@@ -2888,6 +2919,13 @@ tr.dragging .drag-handle{ cursor: grabbing; }
             chip.className = "heatmap-chip";
             chip.textContent = val;
             if (hmColor) chip.style.backgroundColor = hmColor;
+            var chipPct = combineMetricPercentile(row, col.key);
+            if (chipPct !== null) {
+              chip.addEventListener("mouseenter", function () {
+                showMetricTooltip(chip, Math.round(chipPct) + "%");
+              });
+              chip.addEventListener("mouseleave", hideMetricTooltip);
+            }
             inner.appendChild(chip);
           } else {
             inner.textContent = val;
@@ -3519,6 +3557,24 @@ tr.dragging .drag-handle{ cursor: grabbing; }
   }
   function hideInjuryTooltip() {
     $("injuryHoverTooltip").classList.remove("show");
+  }
+
+  function showMetricTooltip(el, text) {
+    var tip = $("metricHoverTooltip");
+    tip.textContent = text;
+    tip.classList.add("show");
+    var rect = el.getBoundingClientRect();
+    var tipRect = tip.getBoundingClientRect();
+    var left = rect.left + (rect.width / 2) - (tipRect.width / 2);
+    var top = rect.bottom + 6;
+    if (left + tipRect.width > window.innerWidth - 10) left = window.innerWidth - tipRect.width - 10;
+    if (left < 10) left = 10;
+    if (top + tipRect.height > window.innerHeight - 10) top = rect.top - tipRect.height - 6;
+    tip.style.left = left + "px";
+    tip.style.top = top + "px";
+  }
+  function hideMetricTooltip() {
+    $("metricHoverTooltip").classList.remove("show");
   }
 
   var SCOUT_TRAITS = {
@@ -4451,6 +4507,9 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     panel.style.setProperty("--panel-fit-scale", scale);
   }
   window.addEventListener("resize", updatePanelFitScale);
+  window.addEventListener("resize", function () {
+    if (colEls && colEls.NOTES) applyTableWidth();
+  });
 
   function openPanel(id) {
     var row = state.rows.filter(function (r) { return r.__id === id; })[0];
@@ -5179,9 +5238,46 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     setTimeout(function () { $("headshotUrlInput").focus(); }, 30);
   });
 
+  function openDeleteConfirm(row) {
+    centerModal.innerHTML = "";
+    var h = document.createElement("h3");
+    h.textContent = "Delete Prospect";
+    centerModal.appendChild(h);
+
+    var msg = document.createElement("p");
+    msg.style.margin = "0 0 4px";
+    msg.style.fontSize = "13.5px";
+    msg.style.lineHeight = "1.4";
+    msg.style.color = "var(--text-muted)";
+    msg.textContent = "Are you sure you want to delete " + (row.NAME || "this prospect") + "? This cannot be undone.";
+    centerModal.appendChild(msg);
+
+    var actions = document.createElement("div");
+    actions.className = "center-modal-actions";
+    var noBtn = document.createElement("button");
+    noBtn.className = "btn";
+    noBtn.textContent = "No";
+    noBtn.addEventListener("click", closeCenterModal);
+    actions.appendChild(noBtn);
+
+    var yesBtn = document.createElement("button");
+    yesBtn.className = "btn danger";
+    yesBtn.textContent = "Yes";
+    yesBtn.addEventListener("click", function () {
+      closeCenterModal();
+      deleteRow(row.__id);
+    });
+    actions.appendChild(yesBtn);
+
+    centerModal.appendChild(actions);
+    openCenterModal();
+  }
+
   $("panelDeleteBtn").addEventListener("click", function () {
     if (!state.activePanelId) return;
-    deleteRow(state.activePanelId);
+    var row = state.rows.filter(function (r) { return r.__id === state.activePanelId; })[0];
+    if (!row) return;
+    openDeleteConfirm(row);
   });
 
   /* ---------------- Center modal (add column / prompts) ---------------- */
