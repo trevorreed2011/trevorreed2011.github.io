@@ -81,8 +81,22 @@ body.view-only .transfer-add-icon,
 body.view-only .transfer-logo-remove{
   pointer-events: none;
 }
+body.view-only #exportJsonBtn,
+body.view-only #exportCsvBtn,
+body.view-only #importBtn,
+body.view-only #importCsvBtn{
+  pointer-events: none;
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 body.view-only .transfer-add-icon{
   display: none !important;
+}
+body.view-only .panel-headshot,
+body.view-only .transfer-logo-item,
+body.view-only #recStarsDisplay{
+  pointer-events: none;
+  cursor: default;
 }
 .login-overlay{
   position: fixed;
@@ -4494,6 +4508,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
         item.appendChild(rm);
 
         item.addEventListener("click", function () {
+          if (!canEdit) return;
           startEditTransferLogo(row, idx);
         });
 
@@ -4885,6 +4900,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
       var svgEl = wrap.firstElementChild;
       (function (starIndex) {
         svgEl.addEventListener("click", function () {
+          if (!canEdit) return;
           var current = parseInt(row.STARS, 10);
           if (isNaN(current)) current = 0;
           var next = (current === starIndex) ? starIndex - 1 : starIndex;
@@ -5291,6 +5307,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
   });
 
   panelHeadshotEl.addEventListener("click", function () {
+    if (!canEdit) return;
     var row = currentPanelRow();
     if (!row) return;
     centerModal.innerHTML = "";
@@ -5533,6 +5550,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
   }
 
   $("exportJsonBtn").addEventListener("click", function () {
+    if (!canEdit) { toast("View-only access \u2014 can't export"); return; }
     toast("Fetching missing headshots\u2026 this may take a moment");
     fetchAllMissingHeadshots().then(function () {
       renderTable();
@@ -5656,6 +5674,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
   }
 
   $("exportCsvBtn").addEventListener("click", function () {
+    if (!canEdit) { toast("View-only access \u2014 can't export"); return; }
     toast("Fetching missing headshots\u2026 this may take a moment");
     fetchAllMissingHeadshots().then(function () {
       renderTable();
@@ -5775,9 +5794,11 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
   }
 
   $("importCsvBtn").addEventListener("click", function () {
+    if (!canEdit) { toast("View-only access — can't import"); return; }
     $("importCsvFile").click();
   });
   $("importCsvFile").addEventListener("change", function (e) {
+    if (!canEdit) { toast("View-only access — can't import"); return; }
     var file = e.target.files[0];
     if (!file) return;
     var reader = new FileReader();
@@ -5886,6 +5907,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     $("importFile").click();
   });
   $("importFile").addEventListener("change", function (e) {
+    if (!canEdit) { toast("View-only access — can't import"); return; }
     var file = e.target.files[0];
     if (!file) return;
     var reader = new FileReader();
