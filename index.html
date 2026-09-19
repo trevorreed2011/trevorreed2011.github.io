@@ -420,9 +420,22 @@ tbody tr{
   transition: background 0.1s;
 }
 tbody tr:hover{ background: var(--surface-2); }
-tbody tr.dragging{ opacity: 0.35; }
-tbody tr.drag-over-top{ box-shadow: inset 0 2px 0 var(--turf-bright); }
-tbody tr.drag-over-bottom{ box-shadow: inset 0 -2px 0 var(--turf-bright); }
+tbody tr.drag-placeholder{ background: var(--turf-dim); opacity: 0.55; }
+tbody tr.drag-placeholder td{ visibility: hidden; }
+
+.drag-ghost-wrap{
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0.88;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.32);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.drag-ghost-wrap table{ margin: 0; }
+.drag-ghost-wrap tbody tr{ background: var(--surface-2); border-bottom: none; }
+body.rows-dragging, body.rows-dragging *{ cursor: grabbing !important; }
 
 td{
   padding: 0;
@@ -558,10 +571,11 @@ th.th-tight .th-inner{ padding: 10px 6px; gap: 4px; }
   display:flex;
   align-items:center;
   justify-content:center;
+  touch-action: none;
 }
 .drag-handle:hover{ color: var(--text-muted); }
 .drag-handle.disabled{ opacity:0.25; cursor: not-allowed; }
-tr.dragging .drag-handle{ cursor: grabbing; }
+tr.drag-placeholder .drag-handle{ cursor: grabbing; }
 
 .pos-badge{
   display:inline-block;
@@ -2706,6 +2720,89 @@ tr.dragging .drag-handle{ cursor: grabbing; }
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
+  /* ---------------- Drag-to-reorder (pointer-based, custom ghost) ---------------- */
+  var rowDragState = null;
+
+  function buildRowDragGhost(tr) {
+    var rect = tr.getBoundingClientRect();
+    var wrap = document.createElement("div");
+    wrap.className = "drag-ghost-wrap";
+    wrap.style.width = rect.width + "px";
+    var ghostTable = document.createElement("table");
+    var existingColgroup = mainTable.querySelector("colgroup");
+    if (existingColgroup) ghostTable.appendChild(existingColgroup.cloneNode(true));
+    var tbodyEl = document.createElement("tbody");
+    var clone = tr.cloneNode(true);
+    clone.classList.remove("drag-placeholder");
+    tbodyEl.appendChild(clone);
+    ghostTable.appendChild(tbodyEl);
+    wrap.appendChild(ghostTable);
+    document.body.appendChild(wrap);
+    wrap.style.left = rect.left + "px";
+    wrap.style.top = rect.top + "px";
+    return { el: wrap };
+  }
+
+  function startRowDrag(e, row, tr) {
+    if (!canEdit) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.preventDefault();
+
+    var rect = tr.getBoundingClientRect();
+    var ghost = buildRowDragGhost(tr);
+    var grabOffsetX = e.clientX - rect.left;
+    var grabOffsetY = e.clientY - rect.top;
+
+    rowDragState = { id: row.__id, tr: tr, ghostEl: ghost.el, hoverTargetId: null, hoverBefore: true };
+    state.dragId = row.__id;
+    tr.classList.add("drag-placeholder");
+    document.body.classList.add("rows-dragging");
+
+    function positionGhost(clientX, clientY) {
+      ghost.el.style.left = (clientX - grabOffsetX) + "px";
+      ghost.el.style.top = (clientY - grabOffsetY) + "px";
+    }
+    positionGhost(e.clientX, e.clientY);
+
+    function onMove(ev) {
+      if (!rowDragState) return;
+      positionGhost(ev.clientX, ev.clientY);
+
+      var elAtPoint = document.elementFromPoint(ev.clientX, ev.clientY);
+      var targetTr = elAtPoint ? elAtPoint.closest("tr") : null;
+      if (!targetTr || targetTr === rowDragState.tr || !bodyRows.contains(targetTr)) return;
+      var targetRect = targetTr.getBoundingClientRect();
+      var before = ev.clientY < targetRect.top + targetRect.height / 2;
+      if (before) {
+        if (targetTr.previousSibling !== rowDragState.tr) bodyRows.insertBefore(rowDragState.tr, targetTr);
+      } else {
+        if (targetTr.nextSibling !== rowDragState.tr) bodyRows.insertBefore(rowDragState.tr, targetTr.nextSibling);
+      }
+      rowDragState.hoverTargetId = targetTr.dataset.id;
+      rowDragState.hoverBefore = before;
+    }
+
+    function onUp() {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      document.body.classList.remove("rows-dragging");
+      if (rowDragState) {
+        rowDragState.ghostEl.remove();
+        rowDragState.tr.classList.remove("drag-placeholder");
+        if (rowDragState.hoverTargetId && rowDragState.hoverTargetId !== rowDragState.id) {
+          reorderRows(rowDragState.id, rowDragState.hoverTargetId, rowDragState.hoverBefore);
+        }
+      }
+      state.dragId = null;
+      rowDragState = null;
+    }
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+  }
+
   /* ---------------- Body rendering ---------------- */
   function renderBody() {
     var visible = getVisibleRows();
@@ -2764,42 +2861,12 @@ tr.dragging .drag-handle{ cursor: grabbing; }
       handle.title = manualOrder ? "Drag to reorder" : "Clear sort to drag-reorder";
       handle.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>';
       if (manualOrder) {
-        handle.draggable = true;
-        handle.addEventListener("dragstart", function (e) {
-          if (!canEdit) { e.preventDefault(); return; }
-          state.dragId = row.__id;
-          tr.classList.add("dragging");
-          e.dataTransfer.effectAllowed = "move";
-        });
-        handle.addEventListener("dragend", function () {
-          tr.classList.remove("dragging");
-          state.dragId = null;
-          Array.prototype.forEach.call(bodyRows.children, function (r) {
-            r.classList.remove("drag-over-top", "drag-over-bottom");
-          });
+        handle.addEventListener("pointerdown", function (e) {
+          startRowDrag(e, row, tr);
         });
       }
       tdDrag.appendChild(handle);
       tr.appendChild(tdDrag);
-
-      tr.addEventListener("dragover", function (e) {
-        if (!manualOrder || !state.dragId || state.dragId === row.__id) return;
-        e.preventDefault();
-        var rect = tr.getBoundingClientRect();
-        var midpoint = rect.top + rect.height / 2;
-        tr.classList.toggle("drag-over-top", e.clientY < midpoint);
-        tr.classList.toggle("drag-over-bottom", e.clientY >= midpoint);
-      });
-      tr.addEventListener("dragleave", function () {
-        tr.classList.remove("drag-over-top", "drag-over-bottom");
-      });
-      tr.addEventListener("drop", function (e) {
-        if (!manualOrder || !state.dragId || state.dragId === row.__id) return;
-        e.preventDefault();
-        var before = tr.classList.contains("drag-over-top");
-        tr.classList.remove("drag-over-top", "drag-over-bottom");
-        reorderRows(state.dragId, row.__id, before);
-      });
 
       getVisibleColumns().forEach(function (col) {
         var td = document.createElement("td");
