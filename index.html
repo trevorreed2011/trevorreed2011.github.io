@@ -2743,6 +2743,9 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     return { el: wrap };
   }
 
+  var AUTO_SCROLL_EDGE = 70;
+  var AUTO_SCROLL_MAX_SPEED = 18;
+
   function startRowDrag(e, row, tr) {
     if (!canEdit) return;
     if (e.pointerType === "mouse" && e.button !== 0) return;
@@ -2752,6 +2755,10 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     var ghost = buildRowDragGhost(tr);
     var grabOffsetX = e.clientX - rect.left;
     var grabOffsetY = e.clientY - rect.top;
+    var lastClientX = e.clientX;
+    var lastClientY = e.clientY;
+    var autoScrollDir = 0;
+    var autoScrollRAF = null;
 
     rowDragState = { id: row.__id, tr: tr, ghostEl: ghost.el, hoverTargetId: null, hoverBefore: true };
     state.dragId = row.__id;
@@ -2764,15 +2771,12 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     }
     positionGhost(e.clientX, e.clientY);
 
-    function onMove(ev) {
-      if (!rowDragState) return;
-      positionGhost(ev.clientX, ev.clientY);
-
-      var elAtPoint = document.elementFromPoint(ev.clientX, ev.clientY);
+    function updateHoverTarget(clientX, clientY) {
+      var elAtPoint = document.elementFromPoint(clientX, clientY);
       var targetTr = elAtPoint ? elAtPoint.closest("tr") : null;
       if (!targetTr || targetTr === rowDragState.tr || !bodyRows.contains(targetTr)) return;
       var targetRect = targetTr.getBoundingClientRect();
-      var before = ev.clientY < targetRect.top + targetRect.height / 2;
+      var before = clientY < targetRect.top + targetRect.height / 2;
       if (before) {
         if (targetTr.previousSibling !== rowDragState.tr) bodyRows.insertBefore(rowDragState.tr, targetTr);
       } else {
@@ -2782,11 +2786,43 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
       rowDragState.hoverBefore = before;
     }
 
+    function updateAutoScroll(clientY) {
+      if (clientY < AUTO_SCROLL_EDGE) {
+        var upStrength = (AUTO_SCROLL_EDGE - clientY) / AUTO_SCROLL_EDGE;
+        autoScrollDir = -Math.max(2, Math.round(upStrength * AUTO_SCROLL_MAX_SPEED));
+      } else if (clientY > window.innerHeight - AUTO_SCROLL_EDGE) {
+        var downStrength = (clientY - (window.innerHeight - AUTO_SCROLL_EDGE)) / AUTO_SCROLL_EDGE;
+        autoScrollDir = Math.max(2, Math.round(downStrength * AUTO_SCROLL_MAX_SPEED));
+      } else {
+        autoScrollDir = 0;
+      }
+    }
+
+    function autoScrollStep() {
+      if (!rowDragState) return;
+      if (autoScrollDir !== 0) {
+        window.scrollBy(0, autoScrollDir);
+        updateHoverTarget(lastClientX, lastClientY);
+      }
+      autoScrollRAF = requestAnimationFrame(autoScrollStep);
+    }
+    autoScrollRAF = requestAnimationFrame(autoScrollStep);
+
+    function onMove(ev) {
+      if (!rowDragState) return;
+      lastClientX = ev.clientX;
+      lastClientY = ev.clientY;
+      positionGhost(ev.clientX, ev.clientY);
+      updateAutoScroll(ev.clientY);
+      updateHoverTarget(ev.clientX, ev.clientY);
+    }
+
     function onUp() {
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
       document.removeEventListener("pointercancel", onUp);
       document.body.classList.remove("rows-dragging");
+      if (autoScrollRAF) cancelAnimationFrame(autoScrollRAF);
       if (rowDragState) {
         rowDragState.ghostEl.remove();
         rowDragState.tr.classList.remove("drag-placeholder");
@@ -5469,6 +5505,12 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     if (!canEdit) return;
     var blank = { __id: uid(), __custom: {}, UNRANKED: true };
     state.columns.forEach(function (c) { blank[c.key] = null; });
+    if (state.activeTab && state.activeTab !== "ALL") {
+      var activeTabDef = TAB_DEFS.filter(function (t) { return t.id === state.activeTab; })[0];
+      if (activeTabDef && activeTabDef.match && activeTabDef.match.length) {
+        blank.POS = activeTabDef.match[0];
+      }
+    }
     state.rows.push(blank);
     renumberRanks();
     markAutoWidthsDirty();
