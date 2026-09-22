@@ -2143,6 +2143,32 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     return measureCtx.measureText(String(text)).width;
   }
 
+  // Measures the true rendered width of a POS pill by rendering it offscreen
+  // with the exact same markup/CSS as the real table cell, rather than
+  // approximating from canvas text metrics + a guessed buffer (letter-spacing,
+  // borders, and font rounding made that approach unreliable for longer
+  // combo values like "ED/IDL").
+  var posBadgeMeasureEl = null;
+  var posBadgeWidthCache = {};
+  function measurePosBadgeWidth(text) {
+    var key = String(text);
+    if (posBadgeWidthCache[key] !== undefined) return posBadgeWidthCache[key];
+    if (!posBadgeMeasureEl) {
+      posBadgeMeasureEl = document.createElement("span");
+      posBadgeMeasureEl.className = "pos-badge";
+      posBadgeMeasureEl.style.position = "absolute";
+      posBadgeMeasureEl.style.visibility = "hidden";
+      posBadgeMeasureEl.style.left = "-9999px";
+      posBadgeMeasureEl.style.top = "-9999px";
+      posBadgeMeasureEl.style.whiteSpace = "nowrap";
+      document.body.appendChild(posBadgeMeasureEl);
+    }
+    posBadgeMeasureEl.textContent = key;
+    var w = posBadgeMeasureEl.getBoundingClientRect().width;
+    posBadgeWidthCache[key] = w;
+    return w;
+  }
+
   var autoWidthsDirty = true;
   var autoWidthsCache = null;
   function markAutoWidthsDirty() { autoWidthsDirty = true; }
@@ -2174,13 +2200,12 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
         var val = row[col.key];
         if ((col.key === "AGE" || col.key === "GR") && typeof val === "number") val = val.toFixed(1);
         var text = (val === null || val === undefined || val === "") ? "\u2014" : String(val);
-        var w = measureTextWidth(text, cellFont);
-        if (isPos) w += 22;
+        var w = isPos ? measurePosBadgeWidth(text) : measureTextWidth(text, cellFont);
         if (col.key === "NAME" && row.INJURIES && row.INJURIES.some(function (inj) { return inj.logged; })) w += 24;
         if (w > maxContentWidth) maxContentWidth = w;
       });
       var headerWidth = measureTextWidth(col.label.toUpperCase(), headerFont) + 28;
-      var contentTotal = maxContentWidth + 10 + 2;
+      var contentTotal = maxContentWidth + (isPos ? 18 : 12);
       if (col.key === "HT" || col.key === "WT") contentTotal += 32;
       var finalWidth = Math.max(headerWidth, contentTotal, MIN_COL_WIDTH);
       if (col.key === "NOTES") finalWidth = Math.min(finalWidth, NOTES_MAX_WIDTH);
