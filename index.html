@@ -2369,8 +2369,14 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
       var batch = db.batch();
       chunk.forEach(function (op) {
         var ref = db.collection("prospects").doc(op.id);
-        if (op.type === "delete") batch.delete(ref);
-        else batch.set(ref, op.data);
+        try {
+          if (op.type === "delete") batch.delete(ref);
+          // JSON round-trip strips undefined values (which Firestore rejects
+          // outright) and guarantees what we write matches what we track.
+          else batch.set(ref, JSON.parse(op.json));
+        } catch (err) {
+          console.error("Big Board: skipped an unsavable row \u2014", op.id, err);
+        }
       });
       batch.commit().then(function () {
         // Only mark these rows as saved now that Firestore has actually
@@ -2395,7 +2401,43 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     chunks.forEach(commitChunk);
   }
 
+  // Safety net: any edit path that forgets to call scheduleSave() is still
+  // picked up within a few seconds, and pending edits are flushed when the tab
+  // is hidden or closed.
+  function hasUnsavedChanges() {
+    if (!currentUser || !canEdit) return false;
+    var seen = {};
+    for (var i = 0; i < state.rows.length; i++) {
+      var r = state.rows[i];
+      seen[r.__id] = true;
+      if (lastSavedSnapshot[r.__id] !== JSON.stringify(r)) return true;
+    }
+    return Object.keys(lastSavedSnapshot).some(function (id) { return !seen[id]; });
+  }
+  setInterval(function () {
+    if (currentUser && canEdit && state.rows.length && hasUnsavedChanges()) scheduleSave();
+  }, 4000);
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden" && currentUser && canEdit && state.rows.length) doSave();
+  });
+  window.addEventListener("pagehide", function () {
+    if (currentUser && canEdit && state.rows.length) doSave();
+  });
+  window.addEventListener("beforeunload", function (e) {
+    if (hasUnsavedChanges()) {
+      doSave();
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+
   var lastKnownRowCount = 0;
+
+  // A row is "dirty" when it has local edits Firestore hasn't confirmed yet.
+  function isRowDirty(row) {
+    return lastSavedSnapshot[row.__id] !== JSON.stringify(row);
+  }
+
   function applyProspectsSnapshot(snap) {
     var incoming = [];
     snap.forEach(function (doc) { incoming.push(doc.data()); });
@@ -2403,12 +2445,21 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     var existingById = {};
     state.rows.forEach(function (r) { existingById[r.__id] = r; });
 
+    var incomingIds = {};
     var rows = incoming.map(function (data) {
+      incomingIds[data.__id] = true;
       var existing = existingById[data.__id];
       if (existing && data.__id === state.activePanelId) {
         // Row is actively being edited in the open popup — leave it untouched
         // so in-progress edits to nested arrays (injuries, traits, etc.)
         // never get overwritten by an incoming sync echo mid-edit.
+        return existing;
+      }
+      if (existing && lastSavedSnapshot[existing.__id] !== undefined && isRowDirty(existing)) {
+        // Local edits that haven't been saved yet (the save is debounced).
+        // An incoming snapshot — e.g. from the other computer, or the echo of
+        // an earlier save — must not wipe them out; the pending save will
+        // push them to Firestore.
         return existing;
       }
       if (existing) {
@@ -2419,6 +2470,12 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
       }
       lastSavedSnapshot[data.__id] = JSON.stringify(data);
       return data;
+    });
+
+    // Rows added locally that haven't reached Firestore yet (e.g. "+ Prospect"
+    // clicked inside the 400ms save window) aren't in the snapshot — keep them.
+    state.rows.forEach(function (r) {
+      if (!incomingIds[r.__id] && lastSavedSnapshot[r.__id] === undefined) rows.push(r);
     });
 
     rows.sort(function (a, b) { return (a.RANK || 0) - (b.RANK || 0); });
@@ -3270,11 +3327,16 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
 
   /* ---------------- Master render ---------------- */
   function renderTable() {
-    renderTabBar();
-    renderHead();
-    renderBody();
-    updateStats();
-    scheduleSave();
+    try {
+      renderTabBar();
+      renderHead();
+      renderBody();
+      updateStats();
+    } finally {
+      // Saving must never depend on rendering succeeding — an exception while
+      // drawing one row used to silently skip the save for every edit.
+      scheduleSave();
+    }
   }
 
   /* ---------------- Side panel ---------------- */
@@ -4171,6 +4233,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
         if (raw === "") {
           row.PFF[m.key] = null;
           input.style.background = "#F4F5F6";
+          scheduleSave();
           return;
         }
         var num = parseFloat(raw);
@@ -4185,6 +4248,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
           row.PFF[m.key] = raw;
           input.style.background = "#F4F5F6";
         }
+        scheduleSave();
       });
 
       cell.appendChild(label);
@@ -4694,6 +4758,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
 
   function closePanel() {
     state.activePanelId = null;
+    scheduleSave();
     panel.classList.remove("open");
     overlay.classList.remove("show");
     setTimeout(function () { overlay.classList.remove("open"); }, 180);
