@@ -2298,6 +2298,11 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
   var auth = firebase.auth();
   var currentUser = null;
   var lastSavedSnapshot = {}; // rowId -> JSON string of last-known-synced row
+  // Writes already handed to Firestore but not yet confirmed. Without this,
+  // every echo of our own write looked "unsaved" and the same edit was sent
+  // again and again until the first confirmation arrived.
+  var inflightJson = {};      // rowId -> JSON string of the write in flight
+  var inflightDelete = {};    // rowId -> true while a delete is in flight
   var saveTimer = null;
   var firstProspectsSnapshot = true;
 
@@ -2347,12 +2352,12 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     state.rows.forEach(function (row) {
       seenIds[row.__id] = true;
       var json = JSON.stringify(row);
-      if (lastSavedSnapshot[row.__id] !== json) {
+      if (lastSavedSnapshot[row.__id] !== json && inflightJson[row.__id] !== json) {
         ops.push({ type: "set", id: row.__id, data: row, json: json });
       }
     });
     Object.keys(lastSavedSnapshot).forEach(function (id) {
-      if (!seenIds[id]) {
+      if (!seenIds[id] && !inflightDelete[id]) {
         ops.push({ type: "delete", id: id });
       }
     });
@@ -2367,6 +2372,10 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
 
     function commitChunk(chunk) {
       var batch = db.batch();
+      chunk.forEach(function (op) {
+        if (op.type === "delete") inflightDelete[op.id] = true;
+        else inflightJson[op.id] = op.json;
+      });
       chunk.forEach(function (op) {
         var ref = db.collection("prospects").doc(op.id);
         try {
@@ -2384,13 +2393,23 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
         // write was permanently mistaken for a successful one, and the
         // edit would never be retried.
         chunk.forEach(function (op) {
-          if (op.type === "delete") delete lastSavedSnapshot[op.id];
-          else lastSavedSnapshot[op.id] = op.json;
+          if (op.type === "delete") {
+            delete lastSavedSnapshot[op.id];
+            delete inflightDelete[op.id];
+          } else {
+            lastSavedSnapshot[op.id] = op.json;
+            if (inflightJson[op.id] === op.json) delete inflightJson[op.id];
+          }
         });
         pending--;
         if (pending === 0 && !anyFailure) hideSaveErrorBanner();
       }).catch(function (err) {
         console.error("Big Board: save failed for a batch of changes \u2014", err);
+        // Nothing from this batch is in flight any more — let the retry resend it.
+        chunk.forEach(function (op) {
+          if (op.type === "delete") delete inflightDelete[op.id];
+          else if (inflightJson[op.id] === op.json) delete inflightJson[op.id];
+        });
         anyFailure = true;
         showSaveErrorBanner();
         pending--;
@@ -2470,6 +2489,14 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
       }
       lastSavedSnapshot[data.__id] = JSON.stringify(data);
       return data;
+    });
+
+    // Rows the server no longer has (deleted on another device) — forget them.
+    state.rows.forEach(function (r) {
+      if (!incomingIds[r.__id] && lastSavedSnapshot[r.__id] !== undefined) {
+        delete lastSavedSnapshot[r.__id];
+        delete inflightJson[r.__id];
+      }
     });
 
     // Rows added locally that haven't reached Firestore yet (e.g. "+ Prospect"
