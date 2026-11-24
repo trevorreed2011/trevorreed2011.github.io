@@ -2306,6 +2306,19 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
   var saveTimer = null;
   var firstProspectsSnapshot = true;
 
+  // Key-sorted JSON: Firestore hands fields back in sorted order, so plain
+  // JSON.stringify could report a row as "changed" when only key order differs.
+  function canonJson(value) {
+    return JSON.stringify(value, function (k, v) {
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        var o = {};
+        Object.keys(v).sort().forEach(function (key) { o[key] = v[key]; });
+        return o;
+      }
+      return v;
+    });
+  }
+
   function scheduleSave() {
     if (!currentUser || !canEdit) return;
     if (saveTimer) clearTimeout(saveTimer);
@@ -2313,17 +2326,41 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
   }
 
   var saveErrorBannerEl = null;
-  function showSaveErrorBanner() {
-    if (saveErrorBannerEl) return;
-    saveErrorBannerEl = document.createElement("div");
-    saveErrorBannerEl.className = "save-error-banner";
-    saveErrorBannerEl.textContent = "\u26A0 Some changes aren't saving \u2014 check your connection. Retrying\u2026";
-    document.body.appendChild(saveErrorBannerEl);
+  function showSaveErrorBanner(text) {
+    var msg = text || "\u26A0 Some changes aren't saving \u2014 check your connection. Retrying\u2026";
+    if (!saveErrorBannerEl) {
+      saveErrorBannerEl = document.createElement("div");
+      saveErrorBannerEl.className = "save-error-banner";
+      document.body.appendChild(saveErrorBannerEl);
+    }
+    saveErrorBannerEl.textContent = msg;
   }
   function hideSaveErrorBanner() {
     if (saveErrorBannerEl) {
       saveErrorBannerEl.remove();
       saveErrorBannerEl = null;
+    }
+  }
+
+  // Small "Saving…" / "Saved" indicator so it's always clear where things stand.
+  var saveStatusEl = null;
+  var saveStatusHideTimer = null;
+  function setSaveStatus(kind) {
+    if (!saveStatusEl) {
+      saveStatusEl = document.createElement("div");
+      saveStatusEl.style.cssText = "position:fixed;left:14px;bottom:14px;z-index:900;padding:5px 11px;border-radius:14px;font:600 11px 'IBM Plex Mono',monospace;background:#fff;border:1px solid #D5D9DD;box-shadow:0 2px 8px rgba(0,0,0,.12);color:#3b4147;display:none;pointer-events:none;";
+      document.body.appendChild(saveStatusEl);
+    }
+    if (saveStatusHideTimer) { clearTimeout(saveStatusHideTimer); saveStatusHideTimer = null; }
+    if (kind === "saving") {
+      saveStatusEl.textContent = "Saving\u2026";
+      saveStatusEl.style.display = "block";
+    } else if (kind === "saved") {
+      saveStatusEl.textContent = "Saved \u2713";
+      saveStatusEl.style.display = "block";
+      saveStatusHideTimer = setTimeout(function () { saveStatusEl.style.display = "none"; }, 1800);
+    } else {
+      saveStatusEl.style.display = "none";
     }
   }
   var saveRetryTimer = null;
@@ -2351,7 +2388,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     var seenIds = {};
     state.rows.forEach(function (row) {
       seenIds[row.__id] = true;
-      var json = JSON.stringify(row);
+      var json = canonJson(row);
       if (lastSavedSnapshot[row.__id] !== json && inflightJson[row.__id] !== json) {
         ops.push({ type: "set", id: row.__id, data: row, json: json });
       }
@@ -2367,16 +2404,37 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     for (var i = 0; i < ops.length; i += 450) {
       chunks.push(ops.slice(i, i + 450));
     }
-    var pending = chunks.length;
-    var anyFailure = false;
 
-    function commitChunk(chunk) {
+    function isTransient(err) {
+      var code = err && err.code;
+      return !!(err && err.__timeout) || code === "unavailable" || code === "deadline-exceeded" || code === "cancelled" || code === "aborted";
+    }
+
+    function markInflight(op) {
+      if (op.type === "delete") inflightDelete[op.id] = true;
+      else inflightJson[op.id] = op.json;
+    }
+    function clearInflight(op) {
+      if (op.type === "delete") delete inflightDelete[op.id];
+      else if (inflightJson[op.id] === op.json) delete inflightJson[op.id];
+    }
+    function markSaved(op) {
+      if (op.type === "delete") {
+        delete lastSavedSnapshot[op.id];
+        delete inflightDelete[op.id];
+      } else {
+        lastSavedSnapshot[op.id] = op.json;
+        if (inflightJson[op.id] === op.json) delete inflightJson[op.id];
+      }
+    }
+
+    // Commits a list of ops; resolves with the ops that could NOT be saved.
+    // If a batch is rejected for a data reason (e.g. one oversized or invalid
+    // row), it is split so a single bad row can't block every other edit.
+    function commitOps(opList) {
       var batch = db.batch();
-      chunk.forEach(function (op) {
-        if (op.type === "delete") inflightDelete[op.id] = true;
-        else inflightJson[op.id] = op.json;
-      });
-      chunk.forEach(function (op) {
+      opList.forEach(function (op) {
+        markInflight(op);
         var ref = db.collection("prospects").doc(op.id);
         try {
           if (op.type === "delete") batch.delete(ref);
@@ -2387,37 +2445,50 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
           console.error("Big Board: skipped an unsavable row \u2014", op.id, err);
         }
       });
-      batch.commit().then(function () {
-        // Only mark these rows as saved now that Firestore has actually
-        // confirmed the write — marking them beforehand meant a failed
-        // write was permanently mistaken for a successful one, and the
-        // edit would never be retried.
-        chunk.forEach(function (op) {
-          if (op.type === "delete") {
-            delete lastSavedSnapshot[op.id];
-            delete inflightDelete[op.id];
-          } else {
-            lastSavedSnapshot[op.id] = op.json;
-            if (inflightJson[op.id] === op.json) delete inflightJson[op.id];
-          }
-        });
-        pending--;
-        if (pending === 0 && !anyFailure) hideSaveErrorBanner();
+      var timeout = new Promise(function (_, reject) {
+        setTimeout(function () {
+          var e = new Error("save timed out");
+          e.__timeout = true;
+          reject(e);
+        }, 25000);
+      });
+      return Promise.race([batch.commit(), timeout]).then(function () {
+        opList.forEach(markSaved);
+        return [];
       }).catch(function (err) {
-        console.error("Big Board: save failed for a batch of changes \u2014", err);
-        // Nothing from this batch is in flight any more — let the retry resend it.
-        chunk.forEach(function (op) {
-          if (op.type === "delete") delete inflightDelete[op.id];
-          else if (inflightJson[op.id] === op.json) delete inflightJson[op.id];
-        });
-        anyFailure = true;
-        showSaveErrorBanner();
-        pending--;
-        if (pending === 0) scheduleSaveRetry();
+        console.error("Big Board: save failed for " + opList.length + " change(s) \u2014", err);
+        opList.forEach(clearInflight);
+        if (opList.length > 1 && !isTransient(err) && !(err && err.code === "permission-denied")) {
+          var mid = Math.ceil(opList.length / 2);
+          return commitOps(opList.slice(0, mid)).then(function (failedA) {
+            return commitOps(opList.slice(mid)).then(function (failedB) { return failedA.concat(failedB); });
+          });
+        }
+        return opList.map(function (op) { return { op: op, err: err }; });
       });
     }
 
-    chunks.forEach(commitChunk);
+    setSaveStatus("saving");
+    Promise.all(chunks.map(commitOps)).then(function (results) {
+      var failed = [].concat.apply([], results);
+      if (!failed.length) {
+        hideSaveErrorBanner();
+        setSaveStatus("saved");
+        return;
+      }
+      setSaveStatus("none");
+      var named = failed.filter(function (f) { return f.op.type === "set"; }).slice(0, 3).map(function (f) {
+        var r = state.rows.filter(function (x) { return x.__id === f.op.id; })[0];
+        return (r && r.NAME) || f.op.id;
+      });
+      var transient = failed.every(function (f) { return isTransient(f.err); });
+      if (!transient && named.length) {
+        showSaveErrorBanner("\u26A0 Can't save: " + named.join(", ") + (failed.length > named.length ? " (+" + (failed.length - named.length) + " more)" : "") + " \u2014 other changes are saving. Retrying\u2026");
+      } else {
+        showSaveErrorBanner();
+      }
+      scheduleSaveRetry();
+    });
   }
 
   // Safety net: any edit path that forgets to call scheduleSave() is still
@@ -2429,12 +2500,42 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
     for (var i = 0; i < state.rows.length; i++) {
       var r = state.rows[i];
       seen[r.__id] = true;
-      if (lastSavedSnapshot[r.__id] !== JSON.stringify(r)) return true;
+      if (lastSavedSnapshot[r.__id] !== canonJson(r)) return true;
     }
     return Object.keys(lastSavedSnapshot).some(function (id) { return !seen[id]; });
   }
+  var unsavedSince = 0;
+  function describeUnsaved() {
+    var out = [];
+    state.rows.forEach(function (r) {
+      var saved = lastSavedSnapshot[r.__id];
+      var now = canonJson(r);
+      if (saved === now) return;
+      var diffKeys = [];
+      try {
+        var a = saved ? JSON.parse(saved) : {};
+        var b = JSON.parse(now);
+        Object.keys(b).concat(Object.keys(a)).forEach(function (k) {
+          if (JSON.stringify(a[k]) !== JSON.stringify(b[k]) && diffKeys.indexOf(k) === -1) diffKeys.push(k);
+        });
+      } catch (e) {}
+      out.push({ id: r.__id, name: r.NAME, inFlight: inflightJson[r.__id] === now, diffKeys: diffKeys });
+    });
+    return out;
+  }
+  window.bigBoardSaveReport = describeUnsaved;
   setInterval(function () {
-    if (currentUser && canEdit && state.rows.length && hasUnsavedChanges()) scheduleSave();
+    if (!(currentUser && canEdit && state.rows.length)) return;
+    if (hasUnsavedChanges()) {
+      if (!unsavedSince) unsavedSince = Date.now();
+      scheduleSave();
+      if (Date.now() - unsavedSince > 30000) {
+        console.warn("Big Board: still unsaved after 30s", describeUnsaved().slice(0, 5));
+        unsavedSince = Date.now();
+      }
+    } else {
+      unsavedSince = 0;
+    }
   }, 4000);
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "hidden" && currentUser && canEdit && state.rows.length) doSave();
@@ -2454,7 +2555,7 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
 
   // A row is "dirty" when it has local edits Firestore hasn't confirmed yet.
   function isRowDirty(row) {
-    return lastSavedSnapshot[row.__id] !== JSON.stringify(row);
+    return lastSavedSnapshot[row.__id] !== canonJson(row);
   }
 
   function applyProspectsSnapshot(snap) {
@@ -2484,10 +2585,10 @@ tr.drag-placeholder .drag-handle{ cursor: grabbing; }
       if (existing) {
         Object.keys(existing).forEach(function (k) { delete existing[k]; });
         Object.assign(existing, data);
-        lastSavedSnapshot[existing.__id] = JSON.stringify(existing);
+        lastSavedSnapshot[existing.__id] = canonJson(existing);
         return existing;
       }
-      lastSavedSnapshot[data.__id] = JSON.stringify(data);
+      lastSavedSnapshot[data.__id] = canonJson(data);
       return data;
     });
 
